@@ -1,0 +1,16 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Dados locais e segredos (nunca versionar)
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+config.toml
+.env
+backups/
