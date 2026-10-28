@@ -1,17 +1,17 @@
 #![forbid(unsafe_code)]
 
+mod api;
 mod config;
 mod ingest;
 mod model;
-// Consultas de leitura ganham uso na API (Fase 3).
-#[allow(dead_code)]
 mod store;
-// Envio e leitura ganham uso na API (Fase 3).
-#[allow(dead_code)]
 mod wa;
 
 use anyhow::Result;
-use tokio::sync::mpsc;
+use std::sync::Arc;
+
+use anyhow::Context;
+use tokio::sync::{broadcast, mpsc};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -42,9 +42,27 @@ async fn main() -> Result<()> {
   )
   .await?;
 
-  let ingest = tokio::spawn(ingest::run(store.clone(), rx));
+  let (events, _) = broadcast::channel(1024);
+  let ingest = tokio::spawn(ingest::run(store.clone(), rx, events.clone()));
 
-  whatsapp_rust::prelude::shutdown_signal().await;
+  let app = api::router(
+    api::AppState {
+      store: store.clone(),
+      wa: Arc::clone(&whatsapp),
+      events,
+      token: config.token.as_str().into(),
+      limiter: Arc::new(api::RateLimiter::new(config.send_per_sec)),
+    },
+    &config.front_origin,
+  )?;
+  let listener = tokio::net::TcpListener::bind(config.bind_addr())
+    .await
+    .with_context(|| format!("abrindo {}", config.bind_addr()))?;
+  tracing::info!(addr = %config.bind_addr(), "API ouvindo");
+  axum::serve(listener, app)
+    .with_graceful_shutdown(whatsapp_rust::prelude::shutdown_signal())
+    .await?;
+
   tracing::info!(state = ?whatsapp.state(), "encerrando");
   whatsapp.shutdown().await;
   ingest.abort();

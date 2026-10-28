@@ -1,25 +1,48 @@
-//! Grava no banco os eventos vindos do WhatsApp.
+//! Grava no banco os eventos vindos do WhatsApp e avisa o front (SSE).
 
 use anyhow::Result;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
+use crate::api::ApiEvent;
 use crate::store::Store;
 use crate::wa::WaEvent;
 
-pub async fn run(store: Store, mut rx: mpsc::Receiver<WaEvent>) {
+pub async fn run(
+  store: Store,
+  mut rx: mpsc::Receiver<WaEvent>,
+  events: broadcast::Sender<ApiEvent>,
+) {
   while let Some(ev) = rx.recv().await {
-    if let Err(e) = apply(&store, ev).await {
-      tracing::error!(error = %e, "falha ao gravar evento");
+    match apply(&store, ev).await {
+      Ok(out) => {
+        for ev in out {
+          // Sem assinantes (front fechado) não é erro.
+          let _ = events.send(ev);
+        }
+      }
+      Err(e) => tracing::error!(error = %e, "falha ao gravar evento"),
     }
   }
 }
 
-pub async fn apply(store: &Store, ev: WaEvent) -> Result<()> {
-  match ev {
-    WaEvent::Connection(_) => {}
+/// Aplica o evento no banco e devolve o que deve ser repassado ao front.
+pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
+  let out = match ev {
+    WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
     WaEvent::Message(msg) => {
-      let inserted = store.run(move |db| db.insert_message(&msg)).await?;
-      tracing::debug!(inserted, "mensagem gravada");
+      store
+        .run(move |db| {
+          if !db.insert_message(&msg)? {
+            return Ok(vec![]);
+          }
+          let mut out = vec![];
+          if let Some(chat) = db.get_chat(&msg.chat_jid)? {
+            out.push(ApiEvent::ChatUpdated(chat));
+          }
+          out.insert(0, ApiEvent::MessageNew(msg));
+          Ok(out)
+        })
+        .await?
     }
     WaEvent::HistoryChat {
       meta,
@@ -27,8 +50,11 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<()> {
       messages,
     } => {
       store
-        .run(move |db| db.import_history_chat(&meta, last_ts, &messages))
-        .await?;
+        .run(move |db| {
+          db.import_history_chat(&meta, last_ts, &messages)?;
+          chat_updated(db, &meta.jid)
+        })
+        .await?
     }
     WaEvent::Status {
       chat_jid,
@@ -36,28 +62,59 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<()> {
       status,
     } => {
       store
-        .run(move |db| db.set_status(&chat_jid, &ids, status))
-        .await?;
+        .run(move |db| {
+          let ids = db.set_status(&chat_jid, &ids, status)?;
+          Ok(if ids.is_empty() {
+            vec![]
+          } else {
+            vec![ApiEvent::MessageStatus {
+              chat_jid,
+              ids,
+              status,
+            }]
+          })
+        })
+        .await?
     }
     WaEvent::ReadElsewhere { chat_jid, ids } => {
       store
-        .run(move |db| db.mark_messages_read(&chat_jid, &ids))
-        .await?;
+        .run(move |db| {
+          db.mark_messages_read(&chat_jid, &ids)?;
+          chat_updated(db, &chat_jid)
+        })
+        .await?
     }
     WaEvent::ChatRead { chat_jid, read } => {
       store
         .run(move |db| {
           if read {
-            db.mark_chat_read(&chat_jid).map(drop)
+            db.mark_chat_read(&chat_jid)?;
           } else {
             // "Marcar como não lida" no celular: sem mensagem específica, contador >= 1.
             let current = db.get_chat(&chat_jid)?.map_or(0, |c| c.unread_count);
-            db.set_unread(&chat_jid, current.max(1))
+            db.set_unread(&chat_jid, current.max(1))?;
           }
+          chat_updated(db, &chat_jid)
         })
-        .await?;
+        .await?
     }
-    WaEvent::ChatMeta(meta) => store.run(move |db| db.upsert_chat(&meta)).await?,
-  }
-  Ok(())
+    WaEvent::ChatMeta(meta) => {
+      store
+        .run(move |db| {
+          db.upsert_chat(&meta)?;
+          chat_updated(db, &meta.jid)
+        })
+        .await?
+    }
+  };
+  Ok(out)
+}
+
+fn chat_updated(db: &crate::store::Db, jid: &str) -> Result<Vec<ApiEvent>> {
+  Ok(
+    db.get_chat(jid)?
+      .map(ApiEvent::ChatUpdated)
+      .into_iter()
+      .collect(),
+  )
 }
