@@ -1,0 +1,10 @@
+.git
+target
+data
+backups
+frontend/node_modules
+frontend/dist
+**/*.db
+**/*.db-*
+config.toml
+.env

@@ -75,6 +75,34 @@ O serviço reinicia se cair. A própria lib reconecta com backoff quando a rede 
 aparece em `/api/status` e no topo da lista de chats. Mensagens recebidas com o serviço parado
 são entregues pelo WhatsApp na reconexão (dentro do que o servidor guarda).
 
+## Rodar com Docker
+
+```sh
+mkdir -p data && sudo chown 1000:1000 data   # ou WPP_UID/WPP_GID com o dono do ./data
+docker compose up -d --build
+docker compose logs -f                       # QR do primeiro pareamento aparece aqui
+```
+
+A imagem (~120 MB) tem o backend e o build do front, servidos em `http://127.0.0.1:8787`.
+Sessão, mensagens e `config.toml` ficam em `./data`. A porta é publicada **só em loopback** no
+servidor; para acessar de outra máquina:
+
+- túnel SSH: `ssh -L 8787:127.0.0.1:8787 servidor` e abra `http://127.0.0.1:8787`; ou
+- um proxy reverso com TLS (Caddy, nginx) ou Tailscale na frente. Não publique a porta em
+  `0.0.0.0` sem TLS: o token trafega em cada requisição.
+
+Variáveis do compose: `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST_LOG` (info).
+
+**Levar a sessão já pareada para o servidor**, sem parear de novo:
+
+1. Pare o backend local (`Ctrl+C` ou `systemctl --user stop wpp-lite`). **Nunca rode duas
+   instâncias com o mesmo `whatsapp.db`**: o WhatsApp pode derrubar a sessão.
+2. Copie o diretório inteiro: `rsync -a data/ servidor:wpp-lite/data/`.
+3. No servidor: `sudo chown -R 1000:1000 data && docker compose up -d`.
+
+`docker compose down` encerra limpo (grava a fila e fecha a sessão). O backup funciona igual:
+`scripts/backup.sh ./data ~/backups/wpp-lite`.
+
 ## Backup
 
 ```sh

@@ -1,0 +1,28 @@
+services:
+  wpp:
+    build: .
+    image: wpp-lite:latest
+    container_name: wpp-lite
+    restart: unless-stopped
+    # Dono do ./data no host (padrão 1000:1000).
+    user: "${WPP_UID:-1000}:${WPP_GID:-1000}"
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # Só loopback no servidor: acesse por túnel SSH ou por um proxy com TLS.
+      - "127.0.0.1:${WPP_HOST_PORT:-8787}:8787"
+    volumes:
+      # Sessão do WhatsApp (whatsapp.db), mensagens e config.toml. Nunca apague.
+      # :Z reetiqueta para SELinux (Fedora/RHEL); sem SELinux é ignorado.
+      - ./data:/data:Z
+    # O backend espera a fila de eventos ser gravada antes de sair (até 10s).
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
