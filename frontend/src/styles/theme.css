@@ -1,0 +1,54 @@
+/* Catppuccin Mocha: padrão fixo, independente de prefers-color-scheme. */
+:root {
+  --ctp-rosewater: #f5e0dc;
+  --ctp-flamingo: #f2cdcd;
+  --ctp-pink: #f5c2e7;
+  --ctp-mauve: #cba6f7;
+  --ctp-red: #f38ba8;
+  --ctp-maroon: #eba0ac;
+  --ctp-peach: #fab387;
+  --ctp-yellow: #f9e2af;
+  --ctp-green: #a6e3a1;
+  --ctp-teal: #94e2d5;
+  --ctp-sky: #89dceb;
+  --ctp-sapphire: #74c7ec;
+  --ctp-blue: #89b4fa;
+  --ctp-lavender: #b4befe;
+  --ctp-text: #cdd6f4;
+  --ctp-subtext1: #bac2de;
+  --ctp-subtext0: #a6adc8;
+  --ctp-overlay2: #9399b2;
+  --ctp-overlay1: #7f849c;
+  --ctp-overlay0: #6c7086;
+  --ctp-surface2: #585b70;
+  --ctp-surface1: #45475a;
+  --ctp-surface0: #313244;
+  --ctp-base: #1e1e2e;
+  --ctp-mantle: #181825;
+  --ctp-crust: #11111b;
+
+  color-scheme: dark;
+
+  /* Tokens semânticos (plano, seção 6.1). Contrastes conferidos >= WCAG AA:
+     text/surface0 ~9:1, crust/mauve ~10:1, subtext0/mantle ~8:1. */
+  --bg-conversation: var(--ctp-base);
+  --bg-sidebar: var(--ctp-mantle);
+  --bg-bar: var(--ctp-crust);
+  --bg-hover: var(--ctp-surface0);
+  --bg-selected: var(--ctp-surface1);
+  --fg: var(--ctp-text);
+  --fg-muted: var(--ctp-subtext0);
+  --bubble-in: var(--ctp-surface0);
+  --bubble-in-fg: var(--ctp-text);
+  --bubble-out: var(--ctp-mauve);
+  --bubble-out-fg: var(--ctp-crust);
+  --accent: var(--ctp-mauve);
+  --accent-fg: var(--ctp-crust);
+  --unread: var(--ctp-lavender);
+  --ok: var(--ctp-green);
+  --err: var(--ctp-red);
+  --warn: var(--ctp-yellow);
+  --link: var(--ctp-blue);
+  --focus: var(--ctp-blue);
+  --border: var(--ctp-surface1);
+}
