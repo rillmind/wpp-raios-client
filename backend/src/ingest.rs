@@ -1,27 +1,44 @@
 //! Grava no banco os eventos vindos do WhatsApp e avisa o front (SSE).
 
 use anyhow::Result;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::api::ApiEvent;
 use crate::store::Store;
 use crate::wa::WaEvent;
 
+/// Consome eventos até `drain` disparar; aí grava o que ainda estiver na fila e sai.
 pub async fn run(
   store: Store,
   mut rx: mpsc::Receiver<WaEvent>,
   events: broadcast::Sender<ApiEvent>,
+  mut drain: oneshot::Receiver<()>,
 ) {
-  while let Some(ev) = rx.recv().await {
-    match apply(&store, ev).await {
-      Ok(out) => {
-        for ev in out {
-          // Sem assinantes (front fechado) não é erro.
-          let _ = events.send(ev);
-        }
+  loop {
+    let ev = tokio::select! {
+      ev = rx.recv() => ev,
+      _ = &mut drain => break,
+    };
+    let Some(ev) = ev else { return };
+    handle(&store, &events, ev).await;
+  }
+  let mut pending = 0;
+  while let Ok(ev) = rx.try_recv() {
+    handle(&store, &events, ev).await;
+    pending += 1;
+  }
+  tracing::info!(pending, "fila de eventos drenada");
+}
+
+async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent) {
+  match apply(store, ev).await {
+    Ok(out) => {
+      for ev in out {
+        // Sem assinantes (front fechado) não é erro.
+        let _ = events.send(ev);
       }
-      Err(e) => tracing::error!(error = %e, "falha ao gravar evento"),
     }
+    Err(e) => tracing::error!(error = %e, "falha ao gravar evento"),
   }
 }
 

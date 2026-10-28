@@ -1,6 +1,9 @@
 import type { Chat, Message, MessagesPage } from './types'
 
-export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787'
+// Em dev o Vite (5173) fala com o backend (8787); no build servido pelo
+// próprio backend, a API está na mesma origem.
+export const API_URL: string =
+  import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8787' : '')
 
 const TOKEN_KEY = 'wpp.token'
 

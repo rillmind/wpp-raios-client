@@ -27,6 +27,9 @@ pub struct Config {
   /// Máximo de mensagens por chat guardadas da sincronização inicial.
   #[serde(default = "default_history_msgs_per_chat")]
   pub history_msgs_per_chat: usize,
+  /// Build do front (`frontend/dist`) servido pelo backend; opcional.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub front_dir: Option<PathBuf>,
   #[serde(skip)]
   pub data_dir: PathBuf,
 }
@@ -68,6 +71,7 @@ impl Config {
         front_origin: DEFAULT_FRONT_ORIGIN.to_string(),
         send_per_sec: default_send_per_sec(),
         history_msgs_per_chat: default_history_msgs_per_chat(),
+        front_dir: None,
         data_dir: PathBuf::new(),
       };
       write_private(&path, &toml::to_string_pretty(&config)?)?;
@@ -85,6 +89,9 @@ impl Config {
     }
     if let Ok(origin) = std::env::var("WPP_FRONT_ORIGIN") {
       self.front_origin = origin;
+    }
+    if let Some(dir) = std::env::var_os("WPP_FRONT_DIR") {
+      self.front_dir = Some(PathBuf::from(dir));
     }
     if let Ok(token) = std::env::var("WPP_TOKEN") {
       self.token = token;

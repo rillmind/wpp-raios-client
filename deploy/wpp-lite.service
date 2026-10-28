@@ -1,0 +1,27 @@
+# Unit do systemd --user. Instalar com scripts/install-service.sh.
+[Unit]
+Description=WhatsApp Lite (backend local)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/wpp-lite
+Environment=WPP_DATA_DIR=%h/.local/share/wpp-lite/data
+Environment=WPP_FRONT_DIR=%h/.local/share/wpp-lite/frontend
+Environment=RUST_LOG=info
+ExecStart=%h/.local/share/wpp-lite/wpp-backend
+# SIGTERM: fecha a API, grava a sessão, drena a fila e faz checkpoint do SQLite.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+# Endurecimento básico (só precisa de rede e do diretório de dados).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/wpp-lite/data
+
+[Install]
+WantedBy=default.target

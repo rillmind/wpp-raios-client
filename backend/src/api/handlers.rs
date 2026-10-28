@@ -220,9 +220,14 @@ pub async fn events(
       Event::default().event("resync").data(n.to_string())
     }
   });
+  let mut shutdown = st.shutdown.clone();
   let stream = stream::once(async move { to_sse(&initial) })
     .chain(live)
-    .map(Ok);
+    .map(Ok)
+    // Sem isso o desligamento gracioso esperaria o navegador fechar o stream.
+    .take_until(async move {
+      let _ = shutdown.wait_for(|stop| *stop).await;
+    });
   Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 

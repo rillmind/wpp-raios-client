@@ -59,24 +59,28 @@ struct Harness {
   wa: Arc<FakeWa>,
   store: Store,
   events: broadcast::Sender<ApiEvent>,
+  stop: watch::Sender<bool>,
 }
 
 fn harness_with(wa: FakeWa) -> Harness {
   let store = Store::new(Db::open_in_memory().unwrap());
   let wa = Arc::new(wa);
   let (events, _) = broadcast::channel(64);
+  let (stop, shutdown) = watch::channel(false);
   let state = AppState {
     store: store.clone(),
     wa: wa.clone(),
     events: events.clone(),
     token: TOKEN.into(),
     limiter: Arc::new(RateLimiter::new(2)),
+    shutdown,
   };
   Harness {
-    app: router(state, ORIGIN).unwrap(),
+    app: router(state, ORIGIN, None).unwrap(),
     wa,
     store,
     events,
+    stop,
   }
 }
 
@@ -353,6 +357,28 @@ async fn sse_sends_state_then_live_events() {
   let second = next_chunk(&mut body).await;
   assert!(second.contains("event: message.new"), "{second}");
   assert!(second.contains("\"id\":\"9\""), "{second}");
+}
+
+#[tokio::test]
+async fn sse_ends_on_shutdown() {
+  let h = harness();
+  let resp = h
+    .app
+    .clone()
+    .oneshot(
+      Request::get(format!("/api/events?token={TOKEN}"))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  let mut body = resp.into_body();
+  next_chunk(&mut body).await;
+  h.stop.send(true).unwrap();
+  let end = tokio::time::timeout(std::time::Duration::from_secs(2), body.frame())
+    .await
+    .expect("SSE não encerrou");
+  assert!(end.is_none(), "stream deveria terminar");
 }
 
 #[tokio::test]

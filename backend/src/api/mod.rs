@@ -15,8 +15,9 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub use error::ApiError;
 pub use events::ApiEvent;
@@ -31,9 +32,16 @@ pub struct AppState {
   pub events: broadcast::Sender<ApiEvent>,
   pub token: Arc<str>,
   pub limiter: Arc<RateLimiter>,
+  /// Vira `true` no desligamento; encerra os streams SSE abertos.
+  pub shutdown: watch::Receiver<bool>,
 }
 
-pub fn router(state: AppState, front_origin: &str) -> anyhow::Result<Router> {
+/// `front_dir`: build do front (`frontend/dist`) servido na mesma origem.
+pub fn router(
+  state: AppState,
+  front_origin: &str,
+  front_dir: Option<&std::path::Path>,
+) -> anyhow::Result<Router> {
   let cors = CorsLayer::new()
     .allow_origin(HeaderValue::from_str(front_origin)?)
     .allow_methods([Method::GET, Method::POST])
@@ -49,7 +57,13 @@ pub fn router(state: AppState, front_origin: &str) -> anyhow::Result<Router> {
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
     .with_state(state);
 
-  Ok(api.layer(cors))
+  let app = match front_dir {
+    Some(dir) => {
+      api.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html"))))
+    }
+    None => api,
+  };
+  Ok(app.layer(cors))
 }
 
 /// `Authorization: Bearer <token>`. O `EventSource` do navegador não envia
