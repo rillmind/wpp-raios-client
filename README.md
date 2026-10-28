@@ -52,7 +52,8 @@ CI local (fmt, clippy, testes, lint e build do front): `scripts/check.sh`.
 | Campo | Env | Padrão | |
 | --- | --- | --- | --- |
 | — | `WPP_DATA_DIR` | `data` | diretório de config e bancos |
-| `port` | `WPP_PORT` | `8787` | sempre em 127.0.0.1 |
+| `port` | `WPP_PORT` | `8787` | porta da API e do front |
+| — | `WPP_BIND` | `127.0.0.1` | endereço de escuta; `0.0.0.0` só dentro de container |
 | `token` | `WPP_TOKEN` | aleatório | `Authorization: Bearer ...` |
 | `front_origin` | `WPP_FRONT_ORIGIN` | `http://127.0.0.1:5173` | única origem aceita no CORS |
 | `front_dir` | `WPP_FRONT_DIR` | — | serve o build do front na mesma origem |
