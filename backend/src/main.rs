@@ -1,8 +1,14 @@
 #![forbid(unsafe_code)]
 
 mod config;
+// Tipos ainda sem consumidor até a camada de persistência (Fase 2).
+#[allow(dead_code)]
+mod model;
+#[allow(dead_code)]
+mod wa;
 
 use anyhow::Result;
+use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -21,7 +27,26 @@ async fn main() -> Result<()> {
     "backend iniciado"
   );
 
-  tokio::signal::ctrl_c().await?;
-  tracing::info!("encerrando");
+  let (tx, mut rx) = mpsc::channel(1024);
+  let whatsapp = wa::start(
+    wa::WaOptions {
+      session_db: config.session_db(),
+      history_msgs_per_chat: config.history_msgs_per_chat,
+    },
+    tx,
+  )
+  .await?;
+
+  let observer = tokio::spawn(async move {
+    while let Some(ev) = rx.recv().await {
+      // Debug apenas: o formato completo inclui conteúdo de mensagens.
+      tracing::debug!(?ev, "evento normalizado");
+    }
+  });
+
+  whatsapp_rust::prelude::shutdown_signal().await;
+  tracing::info!(state = ?whatsapp.state(), "encerrando");
+  whatsapp.shutdown().await;
+  observer.abort();
   Ok(())
 }

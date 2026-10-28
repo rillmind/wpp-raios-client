@@ -6,7 +6,9 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 getrandom = "0.3"
+qrcode = { version = "0.14", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -14,3 +16,5 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# `simd` (padrão da lib) exige nightly; demais features padrão mantidas.
+whatsapp-rust = { version = "=0.7.0", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "signal"] }
