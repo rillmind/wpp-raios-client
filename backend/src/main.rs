@@ -1,9 +1,12 @@
 #![forbid(unsafe_code)]
 
 mod config;
-// Tipos ainda sem consumidor até a camada de persistência (Fase 2).
-#[allow(dead_code)]
+mod ingest;
 mod model;
+// Consultas de leitura ganham uso na API (Fase 3).
+#[allow(dead_code)]
+mod store;
+// Envio e leitura ganham uso na API (Fase 3).
 #[allow(dead_code)]
 mod wa;
 
@@ -27,7 +30,9 @@ async fn main() -> Result<()> {
     "backend iniciado"
   );
 
-  let (tx, mut rx) = mpsc::channel(1024);
+  let store = store::Store::new(store::Db::open(&config.app_db())?);
+
+  let (tx, rx) = mpsc::channel(1024);
   let whatsapp = wa::start(
     wa::WaOptions {
       session_db: config.session_db(),
@@ -37,16 +42,12 @@ async fn main() -> Result<()> {
   )
   .await?;
 
-  let observer = tokio::spawn(async move {
-    while let Some(ev) = rx.recv().await {
-      // Debug apenas: o formato completo inclui conteúdo de mensagens.
-      tracing::debug!(?ev, "evento normalizado");
-    }
-  });
+  let ingest = tokio::spawn(ingest::run(store.clone(), rx));
 
   whatsapp_rust::prelude::shutdown_signal().await;
   tracing::info!(state = ?whatsapp.state(), "encerrando");
   whatsapp.shutdown().await;
-  observer.abort();
+  ingest.abort();
+  store.run(|db| db.checkpoint()).await?;
   Ok(())
 }
