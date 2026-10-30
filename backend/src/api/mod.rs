@@ -55,6 +55,8 @@ pub fn router(
     .route("/api/chats/{jid}/send", post(handlers::send))
     .route("/api/events", get(handlers::events))
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
+    // Fora da autenticação: só diz que o processo responde (healthcheck do container).
+    .route("/healthz", get(|| async { "ok" }))
     .with_state(state);
 
   let app = match front_dir {

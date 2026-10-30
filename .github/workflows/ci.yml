@@ -1,0 +1,116 @@
+name: CI
+
+# PR: testes + build e teste da imagem, sem publicar.
+# Push na main ou tag v*: o mesmo e, se passar, publica no Docker Hub.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/wpp-lite
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run build
+
+  image:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: wpp-lite:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Sobe sem sessão (fica esperando o QR) e confere API, front e desligamento.
+      - name: Smoke test
+        run: |
+          mkdir data && sudo chown 1000:1000 data
+          docker run -d --name wpp -p 127.0.0.1:8787:8787 -v "$PWD/data:/data" \
+            --read-only --cap-drop ALL wpp-lite:ci
+          for _ in $(seq 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/status || true)
+            [ "$code" = 401 ] && break
+            sleep 1
+          done
+          [ "$code" = 401 ] || { docker logs wpp; exit 1; }
+          token=$(sudo sed -n 's/^token = "\(.*\)"$/\1/p' data/config.toml)
+          curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:8787/api/status | grep -q '"state"'
+          curl -sf http://127.0.0.1:8787/ | grep -q '<div id="root">'
+          docker stop -t 30 wpp
+          docker logs wpp 2>&1 | grep -q encerrado
+          [ "$(docker inspect wpp --format '{{.State.ExitCode}}')" = 0 ]
+
+      - name: Tags
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Login no Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Reaproveita o cache do build acima; não recompila.
+      - name: Push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

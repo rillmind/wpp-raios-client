@@ -2,7 +2,7 @@
 //!
 //! Na primeira execução o arquivo é criado com um token de API aleatório.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -13,9 +13,13 @@ const DEFAULT_FRONT_ORIGIN: &str = "http://127.0.0.1:5173";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-  /// Porta local da API (sempre em 127.0.0.1).
+  /// Porta da API.
   #[serde(default = "default_port")]
   pub port: u16,
+  /// Endereço de escuta: 127.0.0.1, ou `WPP_BIND` (só para container, com a porta
+  /// publicada em loopback no host).
+  #[serde(skip, default = "default_bind")]
+  pub bind: IpAddr,
   /// Token exigido em `Authorization: Bearer ...`.
   pub token: String,
   /// Origem permitida no CORS (o front local).
@@ -36,6 +40,10 @@ pub struct Config {
 
 fn default_port() -> u16 {
   DEFAULT_PORT
+}
+
+fn default_bind() -> IpAddr {
+  IpAddr::V4(Ipv4Addr::LOCALHOST)
 }
 
 fn default_front_origin() -> String {
@@ -67,6 +75,7 @@ impl Config {
     } else {
       let config = Config {
         port: DEFAULT_PORT,
+        bind: default_bind(),
         token: generate_token()?,
         front_origin: DEFAULT_FRONT_ORIGIN.to_string(),
         send_per_sec: default_send_per_sec(),
@@ -87,6 +96,9 @@ impl Config {
     if let Ok(port) = std::env::var("WPP_PORT") {
       self.port = port.parse().context("WPP_PORT inválida")?;
     }
+    if let Ok(bind) = std::env::var("WPP_BIND") {
+      self.bind = bind.parse().context("WPP_BIND inválido")?;
+    }
     if let Ok(origin) = std::env::var("WPP_FRONT_ORIGIN") {
       self.front_origin = origin;
     }
@@ -100,7 +112,7 @@ impl Config {
   }
 
   pub fn bind_addr(&self) -> SocketAddr {
-    SocketAddr::from((Ipv4Addr::LOCALHOST, self.port))
+    SocketAddr::from((self.bind, self.port))
   }
 
   /// Banco de sessão da biblioteca do WhatsApp (nunca apagar).

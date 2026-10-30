@@ -52,7 +52,8 @@ CI local (fmt, clippy, testes, lint e build do front): `scripts/check.sh`.
 | Campo | Env | Padrão | |
 | --- | --- | --- | --- |
 | — | `WPP_DATA_DIR` | `data` | diretório de config e bancos |
-| `port` | `WPP_PORT` | `8787` | sempre em 127.0.0.1 |
+| `port` | `WPP_PORT` | `8787` | porta da API e do front |
+| — | `WPP_BIND` | `127.0.0.1` | endereço de escuta; `0.0.0.0` só dentro de container |
 | `token` | `WPP_TOKEN` | aleatório | `Authorization: Bearer ...` |
 | `front_origin` | `WPP_FRONT_ORIGIN` | `http://127.0.0.1:5173` | única origem aceita no CORS |
 | `front_dir` | `WPP_FRONT_DIR` | — | serve o build do front na mesma origem |
@@ -73,6 +74,51 @@ copie o diretório para `~/.local/share/wpp-lite/data/`.
 O serviço reinicia se cair. A própria lib reconecta com backoff quando a rede volta; o estado
 aparece em `/api/status` e no topo da lista de chats. Mensagens recebidas com o serviço parado
 são entregues pelo WhatsApp na reconexão (dentro do que o servidor guarda).
+
+## Rodar com Docker
+
+No servidor basta o `docker-compose.yaml`; a imagem vem do Docker Hub
+([`softfrost/wpp-lite`](https://hub.docker.com/r/softfrost/wpp-lite)):
+
+```sh
+mkdir -p data && sudo chown 1000:1000 data   # ou WPP_UID/WPP_GID com o dono do ./data
+docker compose up -d
+docker compose logs -f                       # QR do primeiro pareamento aparece aqui
+docker compose pull && docker compose up -d  # atualizar
+```
+
+A imagem (~120 MB, amd64) tem o backend e o build do front, servidos em
+`http://127.0.0.1:8787`. Para gerar uma local: `docker build -t softfrost/wpp-lite:dev .` e
+`WPP_TAG=dev docker compose up -d`.
+Sessão, mensagens e `config.toml` ficam em `./data`. A porta é publicada **só em loopback** no
+servidor; para acessar de outra máquina:
+
+- túnel SSH: `ssh -L 8787:127.0.0.1:8787 servidor` e abra `http://127.0.0.1:8787`; ou
+- um proxy reverso com TLS (Caddy, nginx) ou Tailscale na frente. Não publique a porta em
+  `0.0.0.0` sem TLS: o token trafega em cada requisição.
+
+Variáveis do compose: `WPP_TAG` (latest), `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST_LOG` (info).
+
+**Levar a sessão já pareada para o servidor**, sem parear de novo:
+
+1. Pare o backend local (`Ctrl+C` ou `systemctl --user stop wpp-lite`). **Nunca rode duas
+   instâncias com o mesmo `whatsapp.db`**: o WhatsApp pode derrubar a sessão.
+2. Copie o diretório inteiro: `rsync -a data/ servidor:wpp-lite/data/`.
+3. No servidor: `sudo chown -R 1000:1000 data && docker compose up -d`.
+
+`docker compose down` encerra limpo (grava a fila e fecha a sessão). O backup funciona igual:
+`scripts/backup.sh ./data ~/backups/wpp-lite`.
+
+## CI e publicação
+
+`.github/workflows/ci.yml` roda fmt, clippy, testes, lint e build do front, compila a imagem e
+faz um teste com ela no ar (API, front e desligamento limpo). Em PR para por aí. Em push na
+`main` publica `:latest` e `:sha-<commit>`; numa tag `v1.2.3`, também `:1.2.3` e `:1.2`.
+
+Configuração no GitHub (Settings → Secrets and variables → Actions):
+
+- variável `DOCKERHUB_USERNAME` = `softfrost`;
+- secret `DOCKERHUB_TOKEN` = access token do Docker Hub com permissão Read & Write.
 
 ## Backup
 
