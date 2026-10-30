@@ -77,13 +77,19 @@ são entregues pelo WhatsApp na reconexão (dentro do que o servidor guarda).
 
 ## Rodar com Docker
 
+No servidor basta o `docker-compose.yaml`; a imagem vem do Docker Hub
+([`softfrost/wpp-lite`](https://hub.docker.com/r/softfrost/wpp-lite)):
+
 ```sh
 mkdir -p data && sudo chown 1000:1000 data   # ou WPP_UID/WPP_GID com o dono do ./data
-docker compose up -d --build
+docker compose up -d
 docker compose logs -f                       # QR do primeiro pareamento aparece aqui
+docker compose pull && docker compose up -d  # atualizar
 ```
 
-A imagem (~120 MB) tem o backend e o build do front, servidos em `http://127.0.0.1:8787`.
+A imagem (~120 MB, amd64) tem o backend e o build do front, servidos em
+`http://127.0.0.1:8787`. Para gerar uma local: `docker build -t softfrost/wpp-lite:dev .` e
+`WPP_TAG=dev docker compose up -d`.
 Sessão, mensagens e `config.toml` ficam em `./data`. A porta é publicada **só em loopback** no
 servidor; para acessar de outra máquina:
 
@@ -91,7 +97,7 @@ servidor; para acessar de outra máquina:
 - um proxy reverso com TLS (Caddy, nginx) ou Tailscale na frente. Não publique a porta em
   `0.0.0.0` sem TLS: o token trafega em cada requisição.
 
-Variáveis do compose: `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST_LOG` (info).
+Variáveis do compose: `WPP_TAG` (latest), `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST_LOG` (info).
 
 **Levar a sessão já pareada para o servidor**, sem parear de novo:
 
@@ -102,6 +108,17 @@ Variáveis do compose: `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST
 
 `docker compose down` encerra limpo (grava a fila e fecha a sessão). O backup funciona igual:
 `scripts/backup.sh ./data ~/backups/wpp-lite`.
+
+## CI e publicação
+
+`.github/workflows/ci.yml` roda fmt, clippy, testes, lint e build do front, compila a imagem e
+faz um teste com ela no ar (API, front e desligamento limpo). Em PR para por aí. Em push na
+`main` publica `:latest` e `:sha-<commit>`; numa tag `v1.2.3`, também `:1.2.3` e `:1.2`.
+
+Configuração no GitHub (Settings → Secrets and variables → Actions):
+
+- variável `DOCKERHUB_USERNAME` = `softfrost`;
+- secret `DOCKERHUB_TOKEN` = access token do Docker Hub com permissão Read & Write.
 
 ## Backup
 

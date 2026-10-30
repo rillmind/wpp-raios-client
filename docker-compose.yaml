@@ -1,7 +1,7 @@
 services:
   wpp:
-    build: .
-    image: wpp-lite:latest
+    # Publicada pelo CI a cada push na main. Para fixar uma versão: WPP_TAG=0.1.0.
+    image: docker.io/softfrost/wpp-lite:${WPP_TAG:-latest}
     container_name: wpp-lite
     restart: unless-stopped
     # Dono do ./data no host (padrão 1000:1000).
