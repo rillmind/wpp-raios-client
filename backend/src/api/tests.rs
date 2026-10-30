@@ -178,6 +178,18 @@ async fn rejects_missing_or_wrong_token() {
 }
 
 #[tokio::test]
+async fn healthz_needs_no_token() {
+  let h = harness();
+  let resp = h
+    .app
+    .clone()
+    .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn status_reports_connection() {
   let h = harness();
   let (code, body) = call(&h, "GET", "/api/status", None).await;
