@@ -289,6 +289,10 @@ code {
   color: var(--fg-muted);
   font-size: 0.85rem;
 }
+.chat-item__pin {
+  flex: none;
+  color: var(--fg-muted);
+}
 .chat-item__tick {
   margin-right: 0.25rem;
   letter-spacing: -0.2em;

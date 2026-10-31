@@ -393,12 +393,12 @@ impl Db {
     )
   }
 
-  /// Chats por atividade, do mais recente; `before_ts` pagina.
+  /// Fixados primeiro, depois por atividade, do mais recente; `before_ts` pagina.
   pub fn list_chats(&self, limit: u32, before_ts: Option<i64>) -> Result<Vec<ChatSummary>> {
     let mut stmt = self.conn.prepare(&format!(
       "{CHAT_SELECT}
        WHERE (?1 IS NULL OR c.last_msg_ts < ?1)
-       ORDER BY c.last_msg_ts IS NULL, c.last_msg_ts DESC
+       ORDER BY c.pinned DESC, c.last_msg_ts IS NULL, c.last_msg_ts DESC
        LIMIT ?2"
     ))?;
     let rows = stmt.query_map(params![before_ts, limit], chat_from_row)?;

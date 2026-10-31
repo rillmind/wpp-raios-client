@@ -44,6 +44,18 @@ export function ChatList({ chats, selected, onSelect }: Props) {
                   )}
                   {c.last_msg_preview ?? ''}
                 </span>
+                {c.pinned && (
+                  <svg className="chat-item__pin" viewBox="0 0 24 24" width="16" height="16" aria-label="Fixada">
+                    <path
+                      d="M9 4h6l-1 6 3 3v1H7v-1l3-3zM12 14v6"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                )}
                 {c.unread_count > 0 && (
                   <span className="badge" aria-label={`${c.unread_count} não lidas`}>
                     {c.unread_count}

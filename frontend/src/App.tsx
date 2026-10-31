@@ -18,7 +18,9 @@ function loadAutoRead(): boolean {
   }
 }
 
+/** Mesma ordem do backend: fixadas primeiro, depois por atividade. */
 function byActivity(a: Chat, b: Chat): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
   return (b.last_msg_ts ?? -1) - (a.last_msg_ts ?? -1)
 }
 
