@@ -115,6 +115,31 @@ pub struct Message {
   /// Fixada na conversa (para todos), e ainda dentro do prazo.
   #[serde(default)]
   pub pinned: bool,
+  /// Pessoas marcadas (`@`) no texto ou na legenda.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub mentions: Vec<Mention>,
+}
+
+/// Pessoa marcada numa mensagem. No texto ela aparece como `@` + a parte do jid antes do `@`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Mention {
+  pub jid: String,
+  /// Nome de exibição (agenda, apelido, `+telefone` ou "Você"); não é gravado.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub name: Option<String>,
+  /// A pessoa marcada é você.
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  pub me: bool,
+}
+
+impl Mention {
+  pub fn new(jid: impl Into<String>) -> Self {
+    Self {
+      jid: jid.into(),
+      name: None,
+      me: false,
+    }
+  }
 }
 
 /// O que o front mostra antes de baixar a mídia (só baixa quando pedem).

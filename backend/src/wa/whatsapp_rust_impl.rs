@@ -30,7 +30,7 @@ use whatsapp_rust::MexRequest;
 
 use super::{qr, OutgoingMedia, Sent, UnreadRef, WaEvent, WhatsApp};
 use crate::model::{
-  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageAction, MessageKind,
+  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Mention, Message, MessageAction, MessageKind,
   MsgStatus, Quote,
 };
 
@@ -669,6 +669,31 @@ impl WhatsApp for RustWa {
     )
   }
 
+  async fn lookup_phone(&self, digits: &str) -> Result<Option<(String, Option<String>)>> {
+    let found = self
+      .client
+      .contacts()
+      .is_on_whatsapp(&[Jid::pn(digits)])
+      .await
+      .map_err(|e| anyhow!("consultando o número: {e}"))?;
+    let Some(r) = found.into_iter().find(|r| r.is_registered) else {
+      return Ok(None);
+    };
+    // Às vezes o servidor responde pelo `@lid`, com o telefone em `pn_jid`.
+    let (pn, lid) = if r.jid.is_lid() {
+      let pn = r
+        .pn_jid
+        .map_or_else(|| pn_jid(digits), |j| j.to_non_ad_string());
+      (pn, Some(r.jid.to_non_ad_string()))
+    } else {
+      (
+        r.jid.to_non_ad_string(),
+        r.lid.map(|j| j.to_non_ad_string()),
+      )
+    };
+    Ok(Some((pn, lid)))
+  }
+
   async fn shutdown(&self) {
     if let Some(handle) = self.handle.lock().await.take() {
       handle.shutdown().await;
@@ -696,6 +721,12 @@ impl Translator {
     match event {
       Event::Connected(_) => {
         self.set_qr(None);
+        let jids = [client.pn(), client.lid()]
+          .into_iter()
+          .flatten()
+          .map(|j| j.to_non_ad_string())
+          .collect();
+        self.send(WaEvent::Me { jids }).await;
         self.set_state(ConnState::Connected).await
       }
       Event::Disconnected(_) | Event::StreamError(_) | Event::ConnectFailure(_) => {
@@ -790,6 +821,7 @@ impl Translator {
               media: None,
               starred: false,
               pinned: false,
+              mentions: vec![],
             },
             media: None,
           })
@@ -1113,6 +1145,7 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, O
     body,
     quoted_id,
     media,
+    mentions,
   } = classify(message)?;
   let src = &info.source;
   let msg = Message {
@@ -1131,6 +1164,7 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, O
     media: media.as_ref().map(MediaRef::info),
     starred: false,
     pinned: false,
+    mentions,
   };
   Some((msg, media))
 }
@@ -1329,6 +1363,7 @@ fn convert_history_msg(
     body,
     quoted_id,
     media,
+    mentions,
   } = classify(wmi.message.as_option()?)?;
   use wa::web_message_info::Status;
   let status = from_me.then_some(match wmi.status {
@@ -1361,6 +1396,7 @@ fn convert_history_msg(
     media: media.as_ref().map(MediaRef::info),
     starred: false,
     pinned: false,
+    mentions,
   };
   Some((msg, media))
 }
@@ -1372,6 +1408,7 @@ struct Classified {
   quoted_id: Option<String>,
   /// Imagem ou figurinha que dá para baixar depois.
   media: Option<MediaRef>,
+  mentions: Vec<Mention>,
 }
 
 /// `None` para mensagens que não aparecem na conversa (reações, edições,
@@ -1471,11 +1508,15 @@ fn classify(message: &wa::Message) -> Option<Classified> {
     return None;
   };
   let quoted_id = ctx.and_then(|c| c.stanza_id.clone());
+  let mentions = ctx
+    .map(|c| c.mentioned_jid.iter().map(Mention::new).collect())
+    .unwrap_or_default();
   Some(Classified {
     kind,
     body,
     quoted_id,
     media,
+    mentions,
   })
 }
 

@@ -4,6 +4,7 @@ import { Avatar } from './Avatar'
 import { Composer, type FileMeta } from './Composer'
 import { MediaView } from './MediaView'
 import { MessageMenu, type MessagePick } from './MessageMenu'
+import { RichText } from './RichText'
 import {
   chatName,
   formatPhone,
@@ -41,6 +42,10 @@ interface Props {
   replyTo: Message | null
   onCancelReply: () => void
   onMessagePick: (m: Message, pick: MessagePick) => void
+  /** Abre a conversa com uma pessoa (remetente ou marcada). */
+  onOpenPerson: (jid: string) => void
+  /** Abre a conversa com um telefone escrito na mensagem (só dígitos, com DDI). */
+  onOpenPhone: (digits: string) => void
 }
 
 /** Dentro disso o duplo clique é do próprio controle (mídia, citação, links). */
@@ -53,10 +58,6 @@ function jumpTo(id: string) {
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   el.classList.add('bubble--flash')
   setTimeout(() => el.classList.remove('bubble--flash'), 1200)
-}
-
-function quoteText(m: Message): string {
-  return m.kind === 'text' ? (m.body ?? '') : messageText(m)
 }
 
 const STATUS_ICON: Record<string, string> = { sent: '✓', delivered: '✓✓', read: '✓✓' }
@@ -73,6 +74,8 @@ export function Conversation({
   replyTo,
   onCancelReply,
   onMessagePick,
+  onOpenPerson,
+  onOpenPhone,
 }: Props) {
   const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null)
 
@@ -160,7 +163,7 @@ export function Conversation({
       {pinned && (
         <button type="button" className="pinned-bar" onClick={() => jumpTo(pinned.id)}>
           <span aria-hidden="true">📌</span>
-          <span className="pinned-bar__text">{quoteText(pinned)}</span>
+          <span className="pinned-bar__text">{messageText(pinned)}</span>
         </button>
       )}
 
@@ -227,17 +230,28 @@ export function Conversation({
                   setMenu({ m, x: e.clientX, y: e.clientY })
                 }}
               >
-                {showSender && !m.from_me && (
-                <span className="bubble__sender" style={{ color: senderColor(m.sender_jid) }}>
-                  {senderName(m)}
-                </span>
-              )}
+                {showSender &&
+                  !m.from_me &&
+                  (m.sender_jid ? (
+                    <button
+                      type="button"
+                      className="bubble__sender bubble__sender--link"
+                      style={{ color: senderColor(m.sender_jid) }}
+                      title="Abrir conversa"
+                      onClick={() => onOpenPerson(m.sender_jid!)}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                    >
+                      {senderName(m)}
+                    </button>
+                  ) : (
+                    <span className="bubble__sender">{senderName(m)}</span>
+                  ))}
                 {m.quoted_id && (
                   <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
                     {byId.has(m.quoted_id) ? (
                       <>
                         <span className="quote__who">{who(byId.get(m.quoted_id)!)}</span>
-                        <span className="quote__text">{quoteText(byId.get(m.quoted_id)!)}</span>
+                        <span className="quote__text">{messageText(byId.get(m.quoted_id)!)}</span>
                       </>
                     ) : (
                       <span className="quote__text">Mensagem citada</span>
@@ -248,11 +262,15 @@ export function Conversation({
                   <>
                     <MediaView chatJid={conv.jid} message={m} />
                     {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
-                    {m.body && m.body !== m.media.file_name && <span className="bubble__text">{m.body}</span>}
+                    {m.body && m.body !== m.media.file_name && (
+                      <span className="bubble__text">
+                        <RichText text={m.body} mentions={m.mentions} onMention={onOpenPerson} onPhone={onOpenPhone} />
+                      </span>
+                    )}
                   </>
                 ) : (
                   <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                    {messageText(m)}
+                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} onMention={onOpenPerson} onPhone={onOpenPhone} /> : messageText(m)}
                   </span>
                 )}
                 <span className="bubble__meta">
@@ -278,7 +296,7 @@ export function Conversation({
           disabled={!connected}
           onSend={onSend}
           onSendFile={onSendFile}
-          reply={replyTo ? { who: who(replyTo), text: quoteText(replyTo) } : null}
+          reply={replyTo ? { who: who(replyTo), text: messageText(replyTo) } : null}
           onCancelReply={onCancelReply}
         />
       )}

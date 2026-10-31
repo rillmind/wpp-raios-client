@@ -20,6 +20,7 @@ fn msg(chat: &str, id: &str, ts: i64, from_me: bool, is_read: bool) -> Message {
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   }
 }
 
@@ -491,4 +492,64 @@ fn hidden_anchor_shows_only_after_reveal_and_never_hides_a_visible_one() {
   )
   .unwrap();
   assert_eq!(db.last_messages(A, 10, None).unwrap().len(), 1);
+}
+
+#[test]
+fn mentions_get_names_in_messages_and_preview() {
+  let mut db = db();
+  db.set_me(&["999@s.whatsapp.net".into()]).unwrap();
+  db.upsert_contact(&Contact {
+    jid: B.into(),
+    contact_name: Some("Bia".into()),
+    push_name: None,
+  })
+  .unwrap();
+  let mut m = msg(A, "1", 100, false, false);
+  m.body = Some("oi @222 e @999".into());
+  m.mentions = vec![Mention::new(B), Mention::new("999@s.whatsapp.net")];
+  db.insert_message(&m).unwrap();
+
+  let got = db.get_message(A, "1").unwrap().unwrap();
+  assert_eq!(got.mentions.len(), 2);
+  assert_eq!(got.mentions[0].name.as_deref(), Some("Bia"));
+  assert!(!got.mentions[0].me);
+  assert_eq!(got.mentions[1].name.as_deref(), Some("Você"));
+  assert!(got.mentions[1].me);
+  assert_eq!(
+    db.last_messages(A, 10, None).unwrap()[0].mentions,
+    got.mentions
+  );
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_msg_preview.as_deref(),
+    Some("oi @Bia e @Você")
+  );
+}
+
+#[test]
+fn chat_for_person_finds_existing_chat_by_lid_or_phone() {
+  const LID: &str = "77@lid";
+  const PN: &str = "5511999998888@s.whatsapp.net";
+  let db = db();
+  db.set_lid_map(LID, PN).unwrap();
+  db.upsert_contact(&Contact {
+    jid: PN.into(),
+    contact_name: Some("Caio".into()),
+    push_name: None,
+  })
+  .unwrap();
+
+  // Sem conversa: uma vazia, pelo @lid, com nome e telefone.
+  let chat = db.chat_for_person(PN).unwrap();
+  assert_eq!(chat.jid, LID);
+  assert_eq!(chat.name.as_deref(), Some("Caio"));
+  assert_eq!(chat.phone.as_deref(), Some("5511999998888"));
+  assert!(chat.last_msg_ts.is_none());
+  assert!(db.get_chat(LID).unwrap().is_none());
+
+  // Conversa existente pelo telefone: é ela, mesmo pedindo pelo @lid.
+  db.insert_message(&msg(PN, "1", 100, false, false)).unwrap();
+  assert_eq!(db.chat_for_person(LID).unwrap().jid, PN);
+
+  // Sem nada conhecido: o próprio jid.
+  assert_eq!(db.chat_for_person("88@lid").unwrap().jid, "88@lid");
 }

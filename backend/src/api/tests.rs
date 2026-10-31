@@ -153,6 +153,14 @@ impl WhatsApp for FakeWa {
     Ok(None)
   }
 
+  async fn lookup_phone(&self, digits: &str) -> Result<Option<(String, Option<String>)>> {
+    // Só o 5511999998888 tem WhatsApp, e responde sem o 9 a mais, com @lid.
+    Ok(
+      (digits == "5511999998888")
+        .then(|| ("551199998888@s.whatsapp.net".into(), Some("77@lid".into()))),
+    )
+  }
+
   async fn shutdown(&self) {}
 }
 
@@ -206,6 +214,7 @@ fn incoming(id: &str, ts: i64, is_read: bool) -> Message {
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   }
 }
 
@@ -1125,4 +1134,30 @@ async fn load_older_uses_stored_messages_first() {
     h.wa.history_requests.lock().unwrap()[0],
     ("1".to_string(), 18)
   );
+}
+
+#[tokio::test]
+async fn opens_chat_with_person_or_phone() {
+  let h = harness();
+  seed(&h, vec![incoming("1", 100, true)]).await;
+
+  // Pessoa com conversa: a conversa dela.
+  let (status, body) = call(&h, "GET", &format!("/api/people/{A}/chat"), None).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(body["jid"], A);
+  let (status, _) = call(&h, "GET", "/api/people/123@g.us/chat", None).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+
+  // Telefone com WhatsApp: conversa vazia pelo @lid, com o número que o WhatsApp usa.
+  let (status, body) = call(&h, "GET", "/api/phones/5511999998888/chat", None).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(body["jid"], "77@lid");
+  assert_eq!(body["phone"], "551199998888");
+
+  // Sem WhatsApp, ou não é número.
+  let (status, body) = call(&h, "GET", "/api/phones/5511888887777/chat", None).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  assert_eq!(body["error"], "esse número não tem WhatsApp");
+  let (status, _) = call(&h, "GET", "/api/phones/12ab/chat", None).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
 }

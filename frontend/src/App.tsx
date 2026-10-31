@@ -8,7 +8,7 @@ import type { FileMeta } from './components/Composer'
 import { Confirm, type ConfirmRequest } from './components/Dialog'
 import { ForwardDialog } from './components/ForwardDialog'
 import type { MessagePick } from './components/MessageMenu'
-import { copyText, securityCode, shuffledPalette } from './components/format'
+import { copyText, securityCode, shuffledPalette, withMentionNames } from './components/format'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -87,6 +87,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [section, setSection] = useState<Section>('chats')
   const [menu, setMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Conversa aberta que ainda não está na lista (sem mensagens); entra na primeira.
+  const [draftChat, setDraftChat] = useState<Chat | null>(null)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -299,6 +301,18 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     if (autoRead && chat && chat.unread_count > 0 && conn === 'connected') void markRead(jid)
   }
 
+  /** Abre a conversa com uma pessoa (clicada num grupo) ou com um telefone escrito numa
+   *  mensagem, mesmo que ainda não exista. */
+  async function openPerson(who: { jid: string } | { phone: string }) {
+    try {
+      const chat = await ('jid' in who ? api.personChat(who.jid) : api.phoneChat(who.phone))
+      if (!chats.some((c) => c.jid === chat.jid)) setDraftChat(chat)
+      select(chat.jid)
+    } catch (e) {
+      setNotice(fail(e))
+    }
+  }
+
   async function loadOlder() {
     if (!conv || conv.pending) return
     const jid = conv.jid
@@ -367,7 +381,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       case 'reply':
         return setReplyTo(m)
       case 'copy':
-        return void copy(m.body ?? '', 'Texto')
+        return void copy(withMentionNames(m.body ?? '', m.mentions), 'Texto')
       case 'copy_code': {
         const code = securityCode(m.body)
         return code ? void copy(code, 'Código') : undefined
@@ -516,7 +530,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       <main className="main">
         {conv ? (
           <Conversation
-            chat={chats.find((c) => c.jid === conv.jid)}
+            chat={chats.find((c) => c.jid === conv.jid) ?? (draftChat?.jid === conv.jid ? draftChat : undefined)}
             conv={conv}
             connected={conn === 'connected' && stream === 'open'}
             onBack={closeChat}
@@ -527,6 +541,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             replyTo={replyTo?.chat_jid === conv.jid ? replyTo : null}
             onCancelReply={() => setReplyTo(null)}
             onMessagePick={messagePick}
+            onOpenPerson={(jid) => void openPerson({ jid })}
+            onOpenPhone={(phone) => void openPerson({ phone })}
           />
         ) : conn === 'waiting_qr' ? (
           <MainPairing />

@@ -50,6 +50,16 @@ export interface Message {
   starred: boolean
   /** Fixada na conversa. */
   pinned: boolean
+  /** Pessoas marcadas; no texto aparecem como `@` + a parte do jid antes do `@`. */
+  mentions?: Mention[]
+}
+
+export interface Mention {
+  jid: string
+  /** Agenda, apelido, "+telefone" ou "Você". */
+  name?: string
+  /** A pessoa marcada é você. */
+  me?: boolean
 }
 
 export interface MediaInfo {

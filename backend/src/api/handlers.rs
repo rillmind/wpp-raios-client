@@ -239,6 +239,49 @@ pub async fn mark_read(
   Ok(Json(chat))
 }
 
+/// Conversa individual com uma pessoa (remetente ou marcada num grupo): a que já existe
+/// ou uma vazia, que passa a existir na primeira mensagem.
+pub async fn person_chat(
+  State(st): State<AppState>,
+  Path(jid): Path<String>,
+) -> ApiResult<Json<ChatSummary>> {
+  validate_jid(&jid)?;
+  if !(jid.ends_with("@lid") || jid.ends_with("@s.whatsapp.net")) {
+    return Err(ApiError::BadRequest("não é uma pessoa".into()));
+  }
+  Ok(Json(
+    st.store.run(move |db| db.chat_for_person(&jid)).await?,
+  ))
+}
+
+/// Conversa com um número de telefone escrito numa mensagem (só dígitos, com DDI): confere
+/// no WhatsApp se ele tem conta e devolve a conversa como em [`person_chat`].
+pub async fn phone_chat(
+  State(st): State<AppState>,
+  Path(digits): Path<String>,
+) -> ApiResult<Json<ChatSummary>> {
+  if !(8..=15).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    return Err(ApiError::BadRequest("número inválido".into()));
+  }
+  ensure_connected(&st)?;
+  let (pn, lid) = st
+    .wa
+    .lookup_phone(&digits)
+    .await
+    .map_err(ApiError::Upstream)?
+    .ok_or_else(|| ApiError::BadRequest("esse número não tem WhatsApp".into()))?;
+  let chat = st
+    .store
+    .run(move |db| {
+      if let Some(lid) = &lid {
+        db.set_lid_map(lid, &pn)?;
+      }
+      db.chat_for_person(&pn)
+    })
+    .await?;
+  Ok(Json(chat))
+}
+
 #[derive(Deserialize)]
 pub struct ActionBody {
   /// `archive`, `unarchive`, `pin`, `unpin`, `mute`, `unmute` ou `unread`.
@@ -366,6 +409,7 @@ pub async fn send(
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   };
   let m = msg.clone();
   let chat = st
@@ -677,6 +721,7 @@ pub async fn forward(
       media: msg.media.clone(),
       starred: false,
       pinned: false,
+      mentions: vec![],
     };
     let (c, m) = (copy.clone(), media.clone());
     let chat = st
@@ -799,6 +844,7 @@ pub async fn send_media(
     media: Some(media.info()),
     starred: false,
     pinned: false,
+    mentions: vec![],
   };
   let m = msg.clone();
   let chat = st
