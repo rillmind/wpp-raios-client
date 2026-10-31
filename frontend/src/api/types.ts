@@ -14,6 +14,8 @@ export interface Chat {
   last_msg_preview: string | null
   /** Tiques da última mensagem, quando ela é nossa. */
   last_status: MsgStatus | null
+  /** Grupos: quem mandou a última mensagem ("Você", nome ou "+telefone"). */
+  last_sender: string | null
   archived: boolean
   pinned: boolean
 }

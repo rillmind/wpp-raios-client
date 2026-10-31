@@ -1,6 +1,6 @@
 import type { Chat, MsgStatus } from '../api/types'
 import { Avatar } from './Avatar'
-import { chatName, formatListTime } from './format'
+import { chatName, formatListTime, formatPerson } from './format'
 
 const TICK_LABEL: Record<MsgStatus, string> = { sent: 'enviada', delivered: 'entregue', read: 'lida' }
 
@@ -42,6 +42,7 @@ export function ChatList({ chats, selected, onSelect }: Props) {
                       {c.last_status === 'sent' ? '✓' : '✓✓'}
                     </span>
                   )}
+                  {c.last_sender && c.last_msg_preview && `${formatPerson(c.last_sender)}: `}
                   {c.last_msg_preview ?? ''}
                 </span>
                 {c.pinned && (

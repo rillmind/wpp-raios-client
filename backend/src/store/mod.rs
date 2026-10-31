@@ -28,8 +28,13 @@ pub struct ChatSummary {
   pub last_msg_preview: Option<String>,
   /// Status (tiques) da última mensagem, quando ela é nossa.
   pub last_status: Option<MsgStatus>,
+  /// Grupos: quem mandou a última mensagem ("Você", agenda, apelido ou `+telefone`).
+  pub last_sender: Option<String>,
   pub archived: bool,
   pub pinned: bool,
+  /// Jid de quem mandou a última mensagem do grupo (`""` = nós); vira `last_sender`.
+  #[serde(skip)]
+  last_sender_jid: Option<String>,
 }
 
 /// Mensagem recebida ainda não lida, para recibo de leitura.
@@ -357,7 +362,19 @@ impl Db {
           OR c.jid IN (SELECT pn FROM lid_map WHERE lid = ?1)"
     ))?;
     let rows = stmt.query_map(params![jid], chat_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    self.name_senders(rows.collect::<rusqlite::Result<_>>()?)
+  }
+
+  /// Preenche `last_sender` dos grupos com o nome de exibição de quem mandou.
+  fn name_senders(&self, mut chats: Vec<ChatSummary>) -> Result<Vec<ChatSummary>> {
+    for c in &mut chats {
+      c.last_sender = match c.last_sender_jid.take().as_deref() {
+        None => None,
+        Some("") => Some("Você".into()),
+        Some(jid) => self.person_name(jid)?,
+      };
+    }
+    Ok(chats)
   }
 
   /// Nome de exibição de uma pessoa: agenda, apelido ou `+telefone`.
@@ -383,16 +400,15 @@ impl Db {
   }
 
   pub fn get_chat(&self, jid: &str) -> Result<Option<ChatSummary>> {
-    Ok(
-      self
-        .conn
-        .query_row(
-          &format!("{CHAT_SELECT} WHERE c.jid = ?1"),
-          params![jid],
-          chat_from_row,
-        )
-        .optional()?,
-    )
+    let chat = self
+      .conn
+      .query_row(
+        &format!("{CHAT_SELECT} WHERE c.jid = ?1"),
+        params![jid],
+        chat_from_row,
+      )
+      .optional()?;
+    Ok(self.name_senders(chat.into_iter().collect())?.pop())
   }
 
   /// Fixados primeiro, depois por atividade, do mais recente; `before_ts` pagina.
@@ -404,7 +420,7 @@ impl Db {
        LIMIT ?2"
     ))?;
     let rows = stmt.query_map(params![before_ts, limit], chat_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    self.name_senders(rows.collect::<rusqlite::Result<_>>()?)
   }
 
   /// Últimas `limit` mensagens antes de `before` (exclusivo), em ordem cronológica.
@@ -517,7 +533,11 @@ const CHAT_SELECT: &str = "SELECT c.jid,
      COALESCE(lm.pn, CASE WHEN c.jid LIKE '%@s.whatsapp.net' THEN c.jid END),
      c.is_group, c.unread_count, c.last_msg_ts, c.last_msg_preview, c.archived, c.pinned,
      (SELECT CASE WHEN lm2.from_me THEN lm2.status END FROM messages lm2
-       WHERE lm2.chat_jid = c.jid ORDER BY lm2.ts DESC, lm2.rowid DESC LIMIT 1)
+       WHERE lm2.chat_jid = c.jid ORDER BY lm2.ts DESC, lm2.rowid DESC LIMIT 1),
+     CASE WHEN c.is_group THEN
+       (SELECT CASE WHEN lm3.from_me THEN '' ELSE lm3.sender_jid END FROM messages lm3
+         WHERE lm3.chat_jid = c.jid ORDER BY lm3.ts DESC, lm3.rowid DESC LIMIT 1)
+     END
    FROM chats c
    LEFT JOIN lid_map lm ON lm.lid = c.jid
    LEFT JOIN contacts dc ON dc.jid = c.jid
@@ -573,6 +593,8 @@ fn chat_from_row(r: &Row<'_>) -> rusqlite::Result<ChatSummary> {
       .get::<_, Option<String>>(9)?
       .as_deref()
       .and_then(MsgStatus::parse),
+    last_sender: None,
+    last_sender_jid: r.get(10)?,
   })
 }
 

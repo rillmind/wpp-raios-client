@@ -53,9 +53,13 @@ export function formatPhone(digits: string): string {
   return br ? `+55 ${br[1]} ${br[2]}-${br[3]}` : `+${digits}`
 }
 
+/** Nome vindo do backend: "+5511..." (sem nome) vira telefone formatado. */
+export function formatPerson(name: string): string {
+  return name.startsWith('+') ? formatPhone(name.slice(1)) : name
+}
+
 export function senderName(m: Message): string {
-  if (!m.sender_name) return 'Desconhecido'
-  return m.sender_name.startsWith('+') ? formatPhone(m.sender_name.slice(1)) : m.sender_name
+  return m.sender_name ? formatPerson(m.sender_name) : 'Desconhecido'
 }
 
 const decimal = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })

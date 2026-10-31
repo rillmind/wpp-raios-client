@@ -386,3 +386,27 @@ fn pinned_chats_come_first() {
     "fixado vem antes, mesmo mais antigo"
   );
 }
+
+#[test]
+fn group_list_shows_who_sent_the_last_message() {
+  let db = db();
+  let from = |id: &str, sender: &str, ts: i64| Message {
+    sender_jid: Some(sender.into()),
+    ..msg(GROUP, id, ts, false, true)
+  };
+  db.insert_message(&from("1", LID, 10)).unwrap();
+  db.set_lid_map(LID, PN).unwrap();
+  db.upsert_contact(&contact(PN, Some("José"), None)).unwrap();
+  assert_eq!(
+    db.get_chat(GROUP).unwrap().unwrap().last_sender.as_deref(),
+    Some("José")
+  );
+
+  db.insert_message(&msg(GROUP, "2", 20, true, true)).unwrap();
+  let list = db.list_chats(10, None).unwrap();
+  assert_eq!(list[0].last_sender.as_deref(), Some("Você"));
+
+  // Conversa individual não tem remetente na prévia.
+  db.insert_message(&msg(A, "3", 30, false, true)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().last_sender, None);
+}
