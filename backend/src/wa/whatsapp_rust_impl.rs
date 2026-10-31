@@ -2,7 +2,7 @@
 //!
 //! Único arquivo do projeto que importa tipos da biblioteca.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -19,12 +19,14 @@ use whatsapp_rust::sync_task::MajorSyncTask;
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
+use whatsapp_rust::wacore::iq::mex_operations::fetch_all_newsletters_metadata;
 use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
 use whatsapp_rust::wacore::store::traits::AppSyncStore;
 use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore::types::spam_report::{SpamFlow, SpamReportRequest};
 use whatsapp_rust::wacore_binary::jid::JidExt;
+use whatsapp_rust::MexRequest;
 
 use super::{qr, OutgoingMedia, Sent, UnreadRef, WaEvent, WhatsApp};
 use crate::model::{
@@ -52,7 +54,19 @@ pub struct RustWa {
   session: SqliteStore,
   /// QR atual, compartilhado com o [`Translator`].
   qr: Arc<Mutex<Option<String>>>,
+  /// Canais assinados (jid → dados), buscados uma vez por execução.
+  channels: tokio::sync::Mutex<Option<HashMap<String, Channel>>>,
 }
+
+#[derive(Debug, Clone)]
+struct Channel {
+  name: String,
+  /// Caminho da foto (miniatura) no CDN.
+  picture: Option<String>,
+}
+
+/// Host das fotos de canal (a lista traz só o caminho).
+const CHANNEL_PICTURE_HOST: &str = "https://mmg.whatsapp.net";
 
 /// Conecta (ou pareia, mostrando o QR no terminal) e passa a emitir eventos em `tx`.
 pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn WhatsApp>> {
@@ -93,10 +107,59 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     avatar_slots: Semaphore::new(AVATAR_CONCURRENCY),
     session,
     qr,
+    channels: tokio::sync::Mutex::new(None),
   }))
 }
 
 impl RustWa {
+  /// Canais assinados, da memória ou do WhatsApp (uma consulta traz todos).
+  async fn channel_map(&self) -> Result<HashMap<String, Channel>> {
+    let mut cached = self.channels.lock().await;
+    if let Some(map) = cached.as_ref() {
+      return Ok(map.clone());
+    }
+    // A 0.7.0 manda as variáveis vazias e o servidor responde 400; o WhatsApp Web
+    // (e a lib a partir da próxima versão) manda estas duas como `false`.
+    let vars = fetch_all_newsletters_metadata::Variables {
+      fetch_status_metadata: Some(false),
+      fetch_wamo_sub: Some(false),
+    };
+    let response = self
+      .client
+      .mex()
+      .query(MexRequest::new(
+        fetch_all_newsletters_metadata::NAME,
+        fetch_all_newsletters_metadata::DOC_ID,
+        vars,
+      ))
+      .await
+      .map_err(|e| anyhow!("listando canais: {e:?}"))?;
+    let list = response
+      .data
+      .as_ref()
+      .and_then(|d| d["xwa2_newsletter_subscribed"].as_array())
+      .ok_or_else(|| anyhow!("listando canais: resposta sem a lista"))?;
+    let mut map = HashMap::new();
+    for item in list {
+      let (Some(id), Some(name)) = (
+        normalize(item["id"].as_str()),
+        item["thread_metadata"]["name"]["text"]
+          .as_str()
+          .and_then(non_empty),
+      ) else {
+        continue;
+      };
+      let thread = &item["thread_metadata"];
+      let picture = thread["preview"]["direct_path"]
+        .as_str()
+        .or(thread["picture"]["direct_path"].as_str())
+        .map(str::to_string);
+      map.insert(id, Channel { name, picture });
+    }
+    *cached = Some(map.clone());
+    Ok(map)
+  }
+
   /// Nosso jid (o de telefone; o `@lid` se ainda não houver).
   fn own_jid(&self) -> Result<Jid> {
     self
@@ -501,7 +564,18 @@ impl WhatsApp for RustWa {
   async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>> {
     let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
     let _slot = self.avatar_slots.acquire().await?;
-    let url = if jid.is_pn() || jid.is_lid() || jid.is_group() {
+    let url = if jid.is_newsletter() {
+      let key = jid.to_non_ad_string();
+      match self
+        .channel_map()
+        .await?
+        .get(&key)
+        .and_then(|c| c.picture.clone())
+      {
+        Some(path) => format!("{CHANNEL_PICTURE_HOST}{path}"),
+        None => return Ok(None),
+      }
+    } else if jid.is_pn() || jid.is_lid() || jid.is_group() {
       match self
         .client
         .contacts()
@@ -513,7 +587,7 @@ impl WhatsApp for RustWa {
         None => return Ok(None),
       }
     } else {
-      // Status não tem foto; canais, nesta versão da lib, não dão (MEX 400).
+      // Status não tem foto.
       return Ok(None);
     };
     let resp = tokio::time::timeout(
@@ -553,7 +627,22 @@ impl WhatsApp for RustWa {
 
   async fn chat_title(&self, jid: &str) -> Result<Option<String>> {
     let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    if jid.is_newsletter() {
+      let key = jid.to_non_ad_string();
+      return Ok(self.channel_map().await?.get(&key).map(|c| c.name.clone()));
+    }
     chat_title(&self.client, &jid).await
+  }
+
+  async fn channels(&self) -> Result<Vec<(String, String)>> {
+    Ok(
+      self
+        .channel_map()
+        .await?
+        .into_iter()
+        .map(|(jid, c)| (jid, c.name))
+        .collect(),
+    )
   }
 
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {
@@ -945,8 +1034,7 @@ impl Translator {
   }
 }
 
-/// Assunto do grupo (consulta ao WhatsApp). Canais ficam sem nome: as consultas de
-/// canal da lib 0.7.0 são recusadas pelo servidor (MEX 400), ver `docs/FINDINGS.md`.
+/// Assunto do grupo (consulta ao WhatsApp). Canais vêm de [`RustWa::channel_map`].
 async fn chat_title(client: &Client, jid: &Jid) -> Result<Option<String>> {
   if !jid.is_group() {
     return Ok(None);

@@ -13,8 +13,7 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   mensagem ("Carlos: …", "Você: …").
 - Uma barra lateral separa **Conversas**, **Status**, **Canais** e **Arquivadas** (com o número de
   conversas não lidas, ou um ponto nas outras seções); no celular ela fica embaixo. O botão de Status abre direto a conversa do Status. Status e
-  canais são só de leitura: daqui não dá para postar um status nem escrever num canal. Os canais
-  aparecem como "Canal", sem nome nem foto (a biblioteca ainda não consegue buscá-los).
+  canais são só de leitura: daqui não dá para postar um status nem escrever num canal.
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem.

@@ -103,10 +103,14 @@ Várias fontes, todas tratadas como `WaEvent::ChatMeta` (só sobrescrevem quando
   `ContactAction.lidJid`/`pnJid`, `Conversation.lidJid`/`pnJid` e, para o que já estava gravado,
   `Client::get_lid_pn_entry` (tabela `lid_pn_mapping` da sessão, consultada sem rede). Não houve
   chats duplicados: as entradas por telefone eram só nomes, sem mensagens.
-- **Canais (newsletters):** `newsletter().get_metadata()` e `list_subscribed()` falham na 0.7.0
-  com `MEX fatal error (... code=400): Bad Request` (as consultas persistidas da lib não são mais
-  aceitas pelo servidor). Sem nome nem foto de canal até a lib corrigir; as mensagens chegam
-  normalmente. Grupos de que a pessoa saiu respondem `403 forbidden` a `groups().get_metadata()`.
+- **Canais (newsletters):** na 0.7.0, `newsletter().get_metadata()` e `list_subscribed()` falham
+  com `MEX fatal error (... code=400): Bad Request`. A causa é a lista ir com as variáveis vazias;
+  o WhatsApp Web (e a lib no `main`, ainda sem versão publicada) manda
+  `fetch_status_metadata: false` e `fetch_wamo_sub: false`. O app faz essa consulta direto, com
+  `client.mex().query(MexRequest::new(fetch_all_newsletters_metadata::…, Variables { … }))`, e lê
+  `thread_metadata.name.text` e `thread_metadata.preview.direct_path` (foto em
+  `https://mmg.whatsapp.net` + caminho). Ao atualizar a lib, dá para voltar a `list_subscribed()`.
+  Grupos de que a pessoa saiu respondem `403 forbidden` a `groups().get_metadata()`.
 - **Agenda x apelido:** no pareamento, os apelidos do histórico (`PUSH_NAME`) chegaram depois dos
   nomes da agenda e, quando os dois iam para o mesmo campo, ficavam por cima. Para recuperar a
   agenda: `AppSyncStore::set_version("critical_unblock_low", HashState::default())` e

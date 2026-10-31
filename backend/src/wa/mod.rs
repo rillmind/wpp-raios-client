@@ -146,6 +146,9 @@ pub trait WhatsApp: Send + Sync {
   /// [`WaEvent::Contact`] com `contact_name`.
   async fn resync_contacts(&self) -> Result<()>;
 
+  /// Canais assinados: (jid, nome).
+  async fn channels(&self) -> Result<Vec<(String, String)>>;
+
   /// Assunto do grupo; `None` para outros jids.
   async fn chat_title(&self, jid: &str) -> Result<Option<String>>;
 

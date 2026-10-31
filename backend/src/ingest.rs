@@ -99,6 +99,25 @@ pub async fn backfill_titles(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Send
     }
   }
   tracing::info!(chats = jids.len(), found, "nomes de grupos conferidos");
+
+  // Canais: uma consulta traz o nome de todos os assinados.
+  match wa.channels().await {
+    Ok(channels) => {
+      let n = channels.len();
+      for (jid, name) in channels {
+        let meta = crate::model::ChatMeta {
+          jid,
+          name: Some(name),
+          ..Default::default()
+        };
+        if tx.send(WaEvent::ChatMeta(meta)).await.is_err() {
+          return;
+        }
+      }
+      tracing::info!(canais = n, "nomes de canais conferidos");
+    }
+    Err(e) => tracing::warn!(error = %e, "falha ao buscar os canais"),
+  }
 }
 
 /// Tarefa única: pede a agenda de novo assim que conectar (ver migração 4).
