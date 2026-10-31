@@ -51,6 +51,10 @@ impl WhatsApp for FakeWa {
     Ok(())
   }
 
+  async fn phone_for_lid(&self, _lid_jid: &str) -> Result<Option<String>> {
+    Ok(None)
+  }
+
   async fn shutdown(&self) {}
 }
 
@@ -93,6 +97,7 @@ fn incoming(id: &str, ts: i64, is_read: bool) -> Message {
     id: id.into(),
     chat_jid: A.into(),
     sender_jid: Some(A.into()),
+    sender_name: None,
     from_me: false,
     ts,
     kind: MessageKind::Text,

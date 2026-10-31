@@ -1,11 +1,13 @@
 //! Grava no banco os eventos vindos do WhatsApp e avisa o front (SSE).
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::api::ApiEvent;
 use crate::store::Store;
-use crate::wa::WaEvent;
+use crate::wa::{WaEvent, WhatsApp};
 
 /// Consome eventos até `drain` disparar; aí grava o que ainda estiver na fila e sai.
 pub async fn run(
@@ -30,6 +32,40 @@ pub async fn run(
   tracing::info!(pending, "fila de eventos drenada");
 }
 
+/// Liga ao telefone os `@lid` já gravados (conversas e remetentes), pelo que a sessão conhece.
+///
+/// Os eventos novos já trazem a ligação; isto cobre o que veio antes dela existir.
+pub async fn backfill_lids(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender<WaEvent>) {
+  let lids = match store.run(|db| db.unmapped_lids()).await {
+    Ok(lids) => lids,
+    Err(e) => {
+      tracing::error!(error = %e, "falha ao listar lids sem telefone");
+      return;
+    }
+  };
+  let mut found = 0;
+  for lid in &lids {
+    match wa.phone_for_lid(lid).await {
+      Ok(Some(pn)) => {
+        found += 1;
+        if tx
+          .send(WaEvent::LidMap {
+            lid: lid.clone(),
+            pn,
+          })
+          .await
+          .is_err()
+        {
+          return;
+        }
+      }
+      Ok(None) => {}
+      Err(e) => tracing::debug!(error = %e, "falha ao buscar telefone do lid"),
+    }
+  }
+  tracing::info!(lids = lids.len(), found, "telefones dos @lid conferidos");
+}
+
 async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent) {
   match apply(store, ev).await {
     Ok(out) => {
@@ -46,11 +82,14 @@ async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent
 pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
   let out = match ev {
     WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
-    WaEvent::Message(msg) => {
+    WaEvent::Message(mut msg) => {
       store
         .run(move |db| {
           if !db.insert_message(&msg)? {
             return Ok(vec![]);
+          }
+          if let Some(sender) = &msg.sender_jid {
+            msg.sender_name = db.person_name(sender)?;
           }
           let mut out = vec![];
           if let Some(chat) = db.get_chat(&msg.chat_jid)? {
@@ -112,6 +151,29 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
             db.set_unread(&chat_jid, current.max(1))?;
           }
           chat_updated(db, &chat_jid)
+        })
+        .await?
+    }
+    WaEvent::Contact(contact) => {
+      store
+        .run(move |db| {
+          db.upsert_contact(&contact)?;
+          Ok(
+            db.chats_of_person(&contact.jid)?
+              .into_iter()
+              .map(ApiEvent::ChatUpdated)
+              .collect(),
+          )
+        })
+        .await?
+    }
+    WaEvent::LidMap { lid, pn } => {
+      store
+        .run(move |db| {
+          if !db.set_lid_map(&lid, &pn)? {
+            return Ok(vec![]);
+          }
+          chat_updated(db, &lid)
         })
         .await?
     }

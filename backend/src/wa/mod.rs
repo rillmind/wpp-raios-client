@@ -9,7 +9,7 @@ mod whatsapp_rust_impl;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::model::{ChatMeta, ConnState, Message, MsgStatus};
+use crate::model::{ChatMeta, ConnState, Contact, Message, MsgStatus};
 
 pub use whatsapp_rust_impl::{start, WaOptions};
 
@@ -41,8 +41,15 @@ pub enum WaEvent {
     chat_jid: String,
     read: bool,
   },
-  /// Nome de contato ou grupo descoberto/alterado.
+  /// Nome de grupo, arquivamento ou fixação alterados.
   ChatMeta(ChatMeta),
+  /// Nome da agenda ou apelido de uma pessoa.
+  Contact(Contact),
+  /// O `@lid` corresponde a este jid de telefone (`@s.whatsapp.net`).
+  LidMap {
+    lid: String,
+    pn: String,
+  },
 }
 
 /// Referência a uma mensagem recebida, para recibo de leitura.
@@ -68,6 +75,9 @@ pub trait WhatsApp: Send + Sync {
 
   /// Envia recibos de leitura e marca o chat como lido nos outros aparelhos.
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()>;
+
+  /// Jid de telefone de um `@lid`, pelo que a sessão já aprendeu (sem rede).
+  async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>>;
 
   /// Fecha a conexão e grava o estado pendente da sessão.
   async fn shutdown(&self);

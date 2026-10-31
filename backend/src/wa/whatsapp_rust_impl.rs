@@ -15,7 +15,7 @@ use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
 use super::{qr, Sent, UnreadRef, WaEvent, WhatsApp};
-use crate::model::{ChatMeta, ConnState, Message, MessageKind, MsgStatus};
+use crate::model::{ChatMeta, ConnState, Contact, Message, MessageKind, MsgStatus};
 
 pub struct WaOptions {
   pub session_db: PathBuf,
@@ -43,6 +43,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     state: state_tx,
     history_limit: opts.history_msgs_per_chat,
     groups_named: Mutex::new(HashSet::new()),
+    lids_seen: Mutex::new(HashSet::new()),
   });
 
   let bot = Bot::builder()
@@ -118,6 +119,17 @@ impl WhatsApp for RustWa {
     Ok(())
   }
 
+  async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {
+    let jid: Jid = lid_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    Ok(
+      self
+        .client
+        .get_lid_pn_entry(&jid)
+        .await?
+        .map(|e| pn_jid(&e.phone_number)),
+    )
+  }
+
   async fn shutdown(&self) {
     if let Some(handle) = self.handle.lock().await.take() {
       handle.shutdown().await;
@@ -132,6 +144,8 @@ struct Translator {
   history_limit: usize,
   /// Grupos cujo nome já foi buscado nesta execução.
   groups_named: Mutex<HashSet<String>>,
+  /// `@lid` cujo telefone já foi procurado nesta execução.
+  lids_seen: Mutex<HashSet<String>>,
 }
 
 impl Translator {
@@ -168,19 +182,31 @@ impl Translator {
       Event::Messages(batch) => {
         for inbound in batch.iter() {
           if let Some(msg) = convert_live(&inbound.message, &inbound.info) {
-            self
-              .ensure_group_name(client, &inbound.info.source.chat)
-              .await;
-            if !msg.from_me && !inbound.info.source.is_group {
-              if let Some(name) = non_empty(&inbound.info.push_name) {
+            let src = &inbound.info.source;
+            self.ensure_group_name(client, &src.chat).await;
+            if !msg.from_me {
+              if let (Some(jid), Some(name)) =
+                (&msg.sender_jid, clean_name(&inbound.info.push_name))
+              {
                 self
-                  .send(WaEvent::ChatMeta(ChatMeta {
-                    jid: msg.chat_jid.clone(),
-                    name: Some(name),
+                  .send(WaEvent::Contact(Contact {
+                    jid: jid.clone(),
+                    push_name: Some(name),
                     ..Default::default()
                   }))
                   .await;
               }
+              self
+                .learn_lid(client, &src.sender, src.sender_alt.as_ref())
+                .await;
+            }
+            if !src.is_group {
+              let alt = if msg.from_me {
+                src.recipient_alt.as_ref()
+              } else {
+                src.sender_alt.as_ref()
+              };
+              self.learn_lid(client, &src.chat, alt).await;
             }
             self.send(WaEvent::Message(msg)).await;
           }
@@ -237,20 +263,34 @@ impl Translator {
           .await
       }
       Event::ContactUpdate(u) => {
-        let name = u
+        let jid = u.jid.to_non_ad_string();
+        let contact_name = u
           .action
           .full_name
           .as_deref()
           .or(u.action.first_name.as_deref())
-          .and_then(non_empty);
-        if name.is_some() {
+          .and_then(clean_name);
+        if contact_name.is_some() {
           self
-            .send(WaEvent::ChatMeta(ChatMeta {
-              jid: u.jid.to_non_ad_string(),
-              name,
+            .send(WaEvent::Contact(Contact {
+              jid: jid.clone(),
+              contact_name,
               ..Default::default()
             }))
-            .await
+            .await;
+        }
+        let lid = if u.jid.is_lid() {
+          Some(jid.clone())
+        } else {
+          normalize(u.action.lid_jid.as_deref())
+        };
+        let pn = if u.jid.is_pn() {
+          Some(jid)
+        } else {
+          normalize(u.action.pn_jid.as_deref())
+        };
+        if let (Some(lid), Some(pn)) = (lid, pn) {
+          self.send(WaEvent::LidMap { lid, pn }).await;
         }
       }
       Event::HistorySync(lazy) => self.handle_history(lazy).await,
@@ -284,21 +324,56 @@ impl Translator {
     );
 
     for conv in &hs.conversations {
+      for ev in conversation_people(conv) {
+        self.send(ev).await;
+      }
       if let Some(ev) = convert_conversation(conv, self.history_limit) {
         self.send(ev).await;
       }
     }
     for pn in &hs.pushnames {
-      if let (Some(id), Some(name)) = (pn.id.as_deref(), pn.pushname.as_deref().and_then(non_empty))
-      {
+      if let (Some(jid), Some(name)) = (
+        normalize(pn.id.as_deref()),
+        pn.pushname.as_deref().and_then(clean_name),
+      ) {
         self
-          .send(WaEvent::ChatMeta(ChatMeta {
-            jid: id.to_string(),
-            name: Some(name),
+          .send(WaEvent::Contact(Contact {
+            jid,
+            push_name: Some(name),
             ..Default::default()
           }))
           .await;
       }
+    }
+  }
+
+  /// Liga um `@lid` ao telefone, uma vez por execução: pelo `alt` da mensagem
+  /// ou, sem ele, pelo que a sessão já aprendeu.
+  async fn learn_lid(&self, client: &Arc<Client>, jid: &Jid, alt: Option<&Jid>) {
+    if !jid.is_lid() {
+      return;
+    }
+    let lid = jid.to_non_ad_string();
+    {
+      let Ok(mut seen) = self.lids_seen.lock() else {
+        return;
+      };
+      if !seen.insert(lid.clone()) {
+        return;
+      }
+    }
+    let pn = match alt.filter(|a| a.is_pn()) {
+      Some(alt) => Some(alt.to_non_ad_string()),
+      None => match client.get_lid_pn_entry(jid).await {
+        Ok(entry) => entry.map(|e| pn_jid(&e.phone_number)),
+        Err(e) => {
+          tracing::debug!(error = %e, "falha ao buscar telefone do lid");
+          None
+        }
+      },
+    };
+    if let Some(pn) = pn {
+      self.send(WaEvent::LidMap { lid, pn }).await;
     }
   }
 
@@ -358,6 +433,7 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<Message> {
     id: info.id.to_string(),
     chat_jid: src.chat.to_non_ad_string(),
     sender_jid: Some(src.sender.to_non_ad_string()),
+    sender_name: None,
     from_me: src.is_from_me,
     ts: info.timestamp.timestamp(),
     kind,
@@ -407,11 +483,12 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
   Some(WaEvent::HistoryChat {
     meta: ChatMeta {
       jid: chat_jid,
-      name: conv
-        .name
-        .as_deref()
-        .or(conv.display_name.as_deref())
-        .and_then(non_empty),
+      // Conversa individual: o nome vai para `contacts` (ver `conversation_people`).
+      name: if jid.is_group() {
+        conv.name.as_deref().and_then(non_empty)
+      } else {
+        None
+      },
       is_group: jid.is_group(),
       unread_count: Some(if unread == 0 && marked_unread {
         1
@@ -424,6 +501,72 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
     last_ts,
     messages,
   })
+}
+
+/// Nomes e ligação `@lid` <-> telefone vindos de uma conversa do histórico.
+fn conversation_people(conv: &wa::Conversation) -> Vec<WaEvent> {
+  let Some(jid) = normalize(Some(&conv.id)) else {
+    return vec![];
+  };
+  if jid.ends_with("@g.us") {
+    return group_push_names(conv);
+  }
+  let mut out = vec![];
+  let name = conv
+    .name
+    .as_deref()
+    .or(conv.display_name.as_deref())
+    .and_then(clean_name);
+  if name.is_some() {
+    out.push(WaEvent::Contact(Contact {
+      jid: jid.clone(),
+      push_name: name,
+      ..Default::default()
+    }));
+  }
+  let lid = if jid.ends_with("@lid") {
+    Some(jid.clone())
+  } else {
+    normalize(conv.lid_jid.as_deref())
+  };
+  let pn = if jid.ends_with("@s.whatsapp.net") {
+    Some(jid)
+  } else {
+    normalize(conv.pn_jid.as_deref())
+  };
+  if let (Some(lid), Some(pn)) = (lid, pn) {
+    out.push(WaEvent::LidMap { lid, pn });
+  }
+  out
+}
+
+/// Apelido de cada participante, pelo `pushName` das mensagens do grupo.
+fn group_push_names(conv: &wa::Conversation) -> Vec<WaEvent> {
+  let mut seen = HashSet::new();
+  conv
+    .messages
+    .iter()
+    .filter_map(|hm| hm.message.as_option())
+    .filter_map(|wmi| {
+      let sender = wmi
+        .key
+        .as_option()
+        .and_then(|k| k.participant.as_deref())
+        .or(wmi.participant.as_deref());
+      Some((
+        normalize(sender)?,
+        wmi.push_name.as_deref().and_then(clean_name)?,
+      ))
+    })
+    .filter(|(jid, _)| seen.insert(jid.clone()))
+    .map(|(jid, name)| {
+      WaEvent::Contact(Contact {
+        jid,
+        push_name: Some(name),
+        ..Default::default()
+      })
+    })
+    .collect()
 }
 
 fn convert_history_msg(
@@ -452,6 +595,7 @@ fn convert_history_msg(
     id,
     chat_jid: chat_jid.to_string(),
     sender_jid,
+    sender_name: None,
     from_me,
     ts: wmi
       .message_timestamp
@@ -517,6 +661,20 @@ fn has_visible_content(m: &wa::Message) -> bool {
 fn non_empty(s: &str) -> Option<String> {
   let t = s.trim();
   (!t.is_empty()).then(|| t.to_string())
+}
+
+/// Nome de pessoa utilizável; descarta vazios e números mascarados ("+55∙∙∙65").
+fn clean_name(s: &str) -> Option<String> {
+  non_empty(s).filter(|n| !n.contains('\u{2219}'))
+}
+
+/// Jid sem dispositivo (`5511...@s.whatsapp.net`, `123...@lid`), se válido.
+fn normalize(jid: Option<&str>) -> Option<String> {
+  jid?.parse::<Jid>().ok().map(|j| j.to_non_ad_string())
+}
+
+fn pn_jid(phone: &str) -> String {
+  format!("{phone}@s.whatsapp.net")
 }
 
 fn now_secs() -> i64 {

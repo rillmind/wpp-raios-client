@@ -38,9 +38,14 @@ async fn main() -> Result<()> {
       session_db: config.session_db(),
       history_msgs_per_chat: config.history_msgs_per_chat,
     },
-    tx,
+    tx.clone(),
   )
   .await?;
+  tokio::spawn(ingest::backfill_lids(
+    store.clone(),
+    Arc::clone(&whatsapp),
+    tx,
+  ));
 
   let (events, _) = broadcast::channel(1024);
   let (drain_tx, drain_rx) = oneshot::channel();

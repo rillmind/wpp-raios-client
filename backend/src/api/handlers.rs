@@ -183,6 +183,7 @@ pub async fn send(
     id: sent.id,
     chat_jid: jid.clone(),
     sender_jid: None,
+    sender_name: None,
     from_me: true,
     ts: sent.ts,
     kind: MessageKind::Text,

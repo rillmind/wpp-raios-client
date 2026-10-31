@@ -87,6 +87,9 @@ pub struct Message {
   pub id: String,
   pub chat_jid: String,
   pub sender_jid: Option<String>,
+  /// Nome do remetente para exibição (agenda, apelido ou telefone); não é gravado.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub sender_name: Option<String>,
   pub from_me: bool,
   /// Unix seconds.
   pub ts: i64,
@@ -95,6 +98,16 @@ pub struct Message {
   pub quoted_id: Option<String>,
   pub status: Option<MsgStatus>,
   pub is_read: bool,
+}
+
+/// Nomes de uma pessoa (chave: jid `@s.whatsapp.net` ou `@lid`). `None` não sobrescreve.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Contact {
+  pub jid: String,
+  /// Nome salvo na agenda do celular.
+  pub contact_name: Option<String>,
+  /// Nome que a própria pessoa definiu no WhatsApp.
+  pub push_name: Option<String>,
 }
 
 /// Metadados de chat. Campos `None` não sobrescrevem o que já está no banco.
