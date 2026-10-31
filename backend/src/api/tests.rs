@@ -502,6 +502,7 @@ fn media_ref(kind: MessageKind, mimetype: &str) -> MediaRef {
     mimetype: Some(mimetype.into()),
     width: Some(800),
     height: Some(600),
+    seconds: None,
   }
 }
 
@@ -526,7 +527,7 @@ async fn media_is_downloaded_on_demand_and_not_cached() {
   let msgs = json["messages"].as_array().unwrap();
   assert_eq!(
     msgs[0]["media"],
-    json!({ "size": 10, "mimetype": "image/jpeg", "width": 800, "height": 600 })
+    json!({ "size": 10, "mimetype": "image/jpeg", "width": 800, "height": 600, "seconds": null })
   );
   assert!(msgs[2].get("media").is_none(), "texto não tem mídia");
 
@@ -611,4 +612,45 @@ async fn pairing_shows_qr_without_token_only_while_waiting() {
     serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
   assert_eq!(body["state"], "connected");
   assert!(body["qr_svg"].is_null());
+}
+
+#[tokio::test]
+async fn video_and_audio_get_safe_types() {
+  let h = harness();
+  let mut vid = incoming("vid", 10, true);
+  vid.kind = MessageKind::Video;
+  let mut voz = incoming("voz", 20, true);
+  voz.kind = MessageKind::Audio;
+  let mut fake = incoming("fake", 30, true);
+  fake.kind = MessageKind::Audio;
+  seed(&h, vec![vid, voz, fake]).await;
+  h.store
+    .run(|db| {
+      let with = |kind, mime: &str, seconds| MediaRef {
+        seconds,
+        ..media_ref(kind, mime)
+      };
+      db.insert_media(A, "vid", &with(MessageKind::Video, "video/mp4", Some(42)))?;
+      db.insert_media(
+        A,
+        "voz",
+        &with(MessageKind::Audio, "audio/ogg; codecs=opus", Some(7)),
+      )?;
+      db.insert_media(A, "fake", &with(MessageKind::Audio, "text/html", None))
+    })
+    .await
+    .unwrap();
+
+  let (_, json) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  assert_eq!(json["messages"][0]["media"]["seconds"], 42);
+  for (id, want) in [
+    ("vid", "video/mp4"),
+    ("voz", "audio/ogg"),
+    ("fake", "audio/ogg"),
+  ] {
+    let (status, ct, cc, _) = get_raw(&h, &format!("/api/chats/{A}/messages/{id}/media")).await;
+    assert_eq!(status, StatusCode::OK, "{id}");
+    assert_eq!(ct.as_deref(), Some(want), "{id}");
+    assert_eq!(cc.as_deref(), Some("no-store"), "{id}");
+  }
 }

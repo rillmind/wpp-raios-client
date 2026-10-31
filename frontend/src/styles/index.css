@@ -644,6 +644,30 @@ code {
 .media--sticker img {
   object-fit: contain;
 }
+.media video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+.media--audio {
+  background: transparent;
+}
+.media--audio audio {
+  display: block;
+  width: 100%;
+}
+.media--audio .media__download {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 0.6rem;
+  border-radius: 999px;
+}
+.media--audio .media__icon {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.9rem;
+}
 .media__download {
   display: flex;
   flex-direction: column;

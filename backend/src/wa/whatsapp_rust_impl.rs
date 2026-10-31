@@ -157,6 +157,8 @@ impl WhatsApp for RustWa {
       file_length: media.file_length,
       media_type: match media.kind {
         MessageKind::Sticker => MediaType::Sticker,
+        MessageKind::Video => MediaType::Video,
+        MessageKind::Audio => MediaType::Audio,
         _ => MediaType::Image,
       },
     };
@@ -832,12 +834,37 @@ fn classify(message: &wa::Message) -> Option<Classified> {
       x.file_enc_sha256.as_deref(),
       x.file_length,
       x.mimetype.as_deref(),
-      (x.width, x.height),
+      (x.width, x.height, None),
     );
     (MessageKind::Image, caption, x.context_info.as_option())
-  } else if let Some(x) = m.video_message.as_option() {
+  } else if let Some(x) = m
+    .video_message
+    .as_option()
+    // Vídeo redondo (PTV) usa o mesmo formato de vídeo.
+    .or(m.ptv_message.as_option())
+  {
+    media = media_ref(
+      MessageKind::Video,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (x.width, x.height, x.seconds),
+    );
     (MessageKind::Video, caption, x.context_info.as_option())
   } else if let Some(x) = m.audio_message.as_option() {
+    media = media_ref(
+      MessageKind::Audio,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (None, None, x.seconds),
+    );
     (MessageKind::Audio, None, x.context_info.as_option())
   } else if let Some(x) = m.document_message.as_option() {
     let body = caption.or_else(|| x.file_name.clone());
@@ -853,7 +880,7 @@ fn classify(message: &wa::Message) -> Option<Classified> {
         x.file_enc_sha256.as_deref(),
         x.file_length,
         x.mimetype.as_deref(),
-        (x.width, x.height),
+        (x.width, x.height, None),
       );
     }
     (MessageKind::Sticker, None, x.context_info.as_option())
@@ -881,7 +908,7 @@ fn media_ref(
   file_enc_sha256: Option<&[u8]>,
   file_length: Option<u64>,
   mimetype: Option<&str>,
-  (width, height): (Option<u32>, Option<u32>),
+  (width, height, seconds): (Option<u32>, Option<u32>, Option<u32>),
 ) -> Option<MediaRef> {
   Some(MediaRef {
     kind,
@@ -893,6 +920,7 @@ fn media_ref(
     mimetype: mimetype.map(str::to_string),
     width,
     height,
+    seconds,
   })
 }
 
@@ -902,7 +930,6 @@ fn has_visible_content(m: &wa::Message) -> bool {
     || m.live_location_message.is_set()
     || m.contact_message.is_set()
     || m.contacts_array_message.is_set()
-    || m.ptv_message.is_set()
     || m.poll_creation_message.is_set()
     || m.poll_creation_message_v3.is_set()
     || m.event_message.is_set()

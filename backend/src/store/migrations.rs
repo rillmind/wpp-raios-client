@@ -78,6 +78,8 @@ pub(super) const MIGRATIONS: &[&str] = &[
      WHERE jid LIKE '%@s.whatsapp.net';
    CREATE TABLE pending_tasks (name TEXT PRIMARY KEY);
    INSERT INTO pending_tasks (name) VALUES ('contacts_resync');",
+  // 5: vídeo e áudio também são baixados na hora; a duração vai junto com a referência.
+  "ALTER TABLE media ADD COLUMN seconds INTEGER;",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

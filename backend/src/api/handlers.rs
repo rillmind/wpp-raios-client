@@ -24,8 +24,9 @@ const MAX_MESSAGES: u32 = 200;
 /// Teto ao expandir a página para incluir todas as não lidas.
 const MAX_UNREAD_PAGE: u32 = 1000;
 const MAX_TEXT_CHARS: usize = 4096;
-/// Imagens e figurinhas maiores que isso não são baixadas.
+/// Mídias maiores que isso não são baixadas (o arquivo passa inteiro pela memória).
 const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_VIDEO_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -235,7 +236,7 @@ pub async fn send(
   Ok(Json(msg))
 }
 
-/// Baixa a imagem/figurinha do CDN na hora e repassa; nada é gravado.
+/// Baixa a imagem, figurinha, vídeo ou áudio do CDN na hora e repassa; nada é gravado.
 pub async fn media(
   State(st): State<AppState>,
   Path((jid, id)): Path<(String, String)>,
@@ -247,7 +248,12 @@ pub async fn media(
     .run(move |db| db.get_media(&jid, &id))
     .await?
     .ok_or(ApiError::NotFound)?;
-  if media.file_length > MAX_MEDIA_BYTES {
+  let max = if media.kind == MessageKind::Video {
+    MAX_VIDEO_BYTES
+  } else {
+    MAX_MEDIA_BYTES
+  };
+  if media.file_length > max {
     return Err(ApiError::BadRequest("mídia grande demais".into()));
   }
   ensure_connected(&st)?;
@@ -256,9 +262,9 @@ pub async fn media(
     .download_media(&media)
     .await
     .map_err(ApiError::Upstream)?;
-  Ok(image_response(
+  Ok(media_response(
     bytes,
-    image_type(media.mimetype.as_deref(), media.kind),
+    media_type(media.mimetype.as_deref(), media.kind),
   ))
 }
 
@@ -267,7 +273,7 @@ pub async fn avatar(State(st): State<AppState>, Path(jid): Path<String>) -> ApiR
   validate_jid(&jid)?;
   ensure_connected(&st)?;
   match st.wa.profile_picture(&jid).await {
-    Ok(Some(bytes)) => Ok(image_response(bytes, "image/jpeg")),
+    Ok(Some(bytes)) => Ok(media_response(bytes, "image/jpeg")),
     Ok(None) => Ok(StatusCode::NO_CONTENT.into_response()),
     // Comum (privacidade, contato sem conta); não vale um aviso por contato.
     Err(e) => {
@@ -278,7 +284,7 @@ pub async fn avatar(State(st): State<AppState>, Path(jid): Path<String>) -> ApiR
 }
 
 /// `no-store`: o navegador guarda só na memória da aba (ver front), nunca em disco.
-fn image_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
+fn media_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
   (
     [
       (header::CONTENT_TYPE, content_type),
@@ -290,15 +296,31 @@ fn image_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
     .into_response()
 }
 
-/// O mimetype vem de quem mandou a mensagem: só tipos de imagem conhecidos passam.
-fn image_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
-  match mimetype.and_then(|m| m.split(';').next()).map(str::trim) {
-    Some("image/jpeg") => "image/jpeg",
-    Some("image/png") => "image/png",
-    Some("image/webp") => "image/webp",
-    Some("image/gif") => "image/gif",
-    _ if kind == MessageKind::Sticker => "image/webp",
-    _ => "image/jpeg",
+/// O mimetype vem de quem mandou a mensagem: só tipos conhecidos do mesmo tipo de
+/// mídia passam (nada de `text/html`); o resto cai no padrão daquele tipo.
+fn media_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
+  let declared = mimetype.and_then(|m| m.split(';').next()).map(str::trim);
+  match kind {
+    MessageKind::Video => match declared {
+      Some("video/webm") => "video/webm",
+      Some("video/3gpp") => "video/3gpp",
+      _ => "video/mp4",
+    },
+    MessageKind::Audio => match declared {
+      Some("audio/mpeg") => "audio/mpeg",
+      Some("audio/mp4") => "audio/mp4",
+      Some("audio/aac") => "audio/aac",
+      Some("audio/wav") => "audio/wav",
+      _ => "audio/ogg",
+    },
+    _ => match declared {
+      Some("image/jpeg") => "image/jpeg",
+      Some("image/png") => "image/png",
+      Some("image/webp") => "image/webp",
+      Some("image/gif") => "image/gif",
+      _ if kind == MessageKind::Sticker => "image/webp",
+      _ => "image/jpeg",
+    },
   }
 }
 

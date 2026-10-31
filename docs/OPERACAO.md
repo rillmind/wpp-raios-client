@@ -37,7 +37,7 @@ Tudo em `127.0.0.1`. As rotas exigem `Authorization: Bearer <token>`; só `/api/
 | `GET /api/status` | `{ state, connected }` |
 | `GET /api/chats?limit=&before_ts=` | conversas por atividade, com `name` e `phone` |
 | `GET /api/chats/{jid}/messages?limit=&before=` | últimas mensagens do banco local + `first_unread_id`; a primeira página sempre inclui todas as não lidas. Mensagens com imagem/figurinha trazem `media` |
-| `GET /api/chats/{jid}/messages/{id}/media` | baixa a imagem/figurinha do WhatsApp na hora (`Cache-Control: no-store`) |
+| `GET /api/chats/{jid}/messages/{id}/media` | baixa a imagem, figurinha, vídeo ou áudio do WhatsApp na hora (`Cache-Control: no-store`; até 32 MB, vídeo até 100 MB) |
 | `GET /api/chats/{jid}/avatar` | foto de perfil, buscada na hora; `204` se não houver |
 | `POST /api/chats/{jid}/read` | recibos de leitura + marca lido no celular |
 | `POST /api/chats/{jid}/send` | `{ "text": "..." }`, uma mensagem por requisição |

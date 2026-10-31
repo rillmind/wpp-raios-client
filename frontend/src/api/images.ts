@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { fetchImage } from './client'
 
-// Imagens baixadas ficam só na memória desta aba (URLs de blob): somem ao
-// fechar ou recarregar, e nada vai para o disco nem para o banco.
+// Mídias baixadas (imagens, vídeos, áudios) ficam só na memória desta aba (URLs de
+// blob): somem ao fechar ou recarregar, e nada vai para o disco nem para o banco.
 const cache = new Map<string, Promise<string | null>>()
 
 export function loadImage(path: string): Promise<string | null> {

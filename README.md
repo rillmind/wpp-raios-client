@@ -17,10 +17,12 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem.
 - Mostra as fotos de perfil, que carregam sozinhas.
-- Imagens e figurinhas aparecem como um botão com o tamanho do arquivo; só são baixadas do
-  WhatsApp quando você clica. Ficam só na memória da aba: nada vai para o disco nem para o banco
-  (o banco guarda só a referência para baixar). Fechou a aba, sumiram. Figurinhas animadas
-  vetoriais aparecem como `[figurinha]`, e imagens recebidas antes desta versão como `[imagem]`.
+- Imagens, figurinhas, vídeos e áudios aparecem como um botão com o tamanho do arquivo (e a
+  duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem abre na
+  conversa (clique para ampliar); vídeo e áudio começam a tocar no player do navegador. Ficam só
+  na memória da aba: nada vai para o disco nem para o banco (o banco guarda só a referência para
+  baixar). Fechou a aba, sumiram. Figurinhas animadas vetoriais aparecem como `[figurinha]`, e
+  mídias recebidas antes desta versão como `[imagem]`, `[vídeo]` etc.
 - Abre a conversa na primeira mensagem não lida, com um separador, e com a caixa de mensagem já
   selecionada (em telas de toque não, para não abrir o teclado). Esc fecha a conversa e volta à
   tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
@@ -31,7 +33,7 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   abrir não marca nada: só o botão "Marcar como lida" faz isso.
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
   sincronização inicial). O histórico antigo continua no celular.
-- Áudio, vídeo e documentos aparecem como `[áudio]`, `[vídeo]`, `[documento]`.
+- Documentos aparecem como `[documento]`.
 - Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
   entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 

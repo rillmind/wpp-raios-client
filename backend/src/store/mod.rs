@@ -223,8 +223,8 @@ impl Db {
   pub fn insert_media(&self, chat_jid: &str, msg_id: &str, m: &MediaRef) -> Result<()> {
     self.conn.execute(
       "INSERT INTO media (chat_jid, msg_id, kind, direct_path, media_key, file_sha256,
-         file_enc_sha256, file_length, mimetype, width, height)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         file_enc_sha256, file_length, mimetype, width, height, seconds)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
        ON CONFLICT(chat_jid, msg_id) DO NOTHING",
       params![
         chat_jid,
@@ -238,6 +238,7 @@ impl Db {
         m.mimetype,
         m.width,
         m.height,
+        m.seconds,
       ],
     )?;
     Ok(())
@@ -249,7 +250,7 @@ impl Db {
         .conn
         .query_row(
           "SELECT kind, direct_path, media_key, file_sha256, file_enc_sha256, file_length,
-             mimetype, width, height
+             mimetype, width, height, seconds
            FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
           params![chat_jid, msg_id],
           |r| {
@@ -265,6 +266,7 @@ impl Db {
               mimetype: r.get(6)?,
               width: r.get(7)?,
               height: r.get(8)?,
+              seconds: r.get(9)?,
             })
           },
         )
@@ -540,7 +542,7 @@ fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
        m.status, m.is_read, {},
-       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds
      FROM messages m
      LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
@@ -596,6 +598,7 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
         mimetype: r.get(13)?,
         width: r.get(14)?,
         height: r.get(15)?,
+        seconds: r.get(17)?,
       })
     } else {
       None

@@ -41,6 +41,8 @@ export interface MediaInfo {
   mimetype: string | null
   width: number | null
   height: number | null
+  /** Duração em segundos (vídeo e áudio). */
+  seconds: number | null
 }
 
 export interface MessagesPage {

@@ -1,16 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { api } from '../api/client'
 import { useImage } from '../api/images'
 import type { Message } from '../api/types'
-import { formatBytes } from './format'
+import { formatBytes, formatDuration } from './format'
 
 const MAX_W = 280
 const MAX_H = 320
 const STICKER = 140
+const AUDIO_W = 260
 
-/** Caixa com a proporção da imagem, para a conversa não pular quando ela chegar. */
-function boxSize(m: Message): { width: number; height: number } {
+const LABEL: Record<string, string> = {
+  image: 'Imagem',
+  sticker: 'Figurinha',
+  video: 'Vídeo',
+  audio: 'Áudio',
+}
+
+/** Caixa com a proporção da mídia, para a conversa não pular quando ela chegar. */
+function boxSize(m: Message): CSSProperties {
   if (m.kind === 'sticker') return { width: STICKER, height: STICKER }
+  if (m.kind === 'audio') return { width: AUDIO_W }
   const w = m.media?.width ?? 0
   const h = m.media?.height ?? 0
   if (!w || !h) return { width: MAX_W, height: Math.round(MAX_W * 0.75) }
@@ -19,35 +28,35 @@ function boxSize(m: Message): { width: number; height: number } {
 }
 
 /**
- * Imagem ou figurinha de uma mensagem. Só baixa quando a pessoa clica; o arquivo
- * fica na memória da aba (ver `api/images.ts`).
+ * Imagem, figurinha, vídeo ou áudio de uma mensagem. Só baixa quando a pessoa clica;
+ * o arquivo fica na memória da aba (ver `api/images.ts`).
  */
 export function MediaView({ chatJid, message }: { chatJid: string; message: Message }) {
   // Cada tentativa remonta o download (uma falha não fica em cache).
   const [attempt, setAttempt] = useState(0)
-  const sticker = message.kind === 'sticker'
-  const label = sticker ? 'Figurinha' : 'Imagem'
-  const size = boxSize(message)
+  const kind = message.kind
+  const label = LABEL[kind] ?? 'Mídia'
+  const details = [
+    message.media?.seconds ? formatDuration(message.media.seconds) : null,
+    message.media?.size ? formatBytes(message.media.size) : null,
+  ].filter(Boolean)
 
   return (
-    <div className={sticker ? 'media media--sticker' : 'media'} style={size}>
+    <div className={`media media--${kind}`} style={boxSize(message)}>
       {attempt === 0 ? (
         <button type="button" className="media__download" onClick={() => setAttempt(1)}>
           <span className="media__icon" aria-hidden="true">
-            ↓
+            {kind === 'audio' || kind === 'video' ? '▶' : '↓'}
           </span>
-          <span>
-            {label}
-            {message.media?.size ? ` · ${formatBytes(message.media.size)}` : ''}
-          </span>
-          <span className="media__hint">Clique para baixar</span>
+          <span>{[label, ...details].join(' · ')}</span>
+          {kind !== 'audio' && <span className="media__hint">Clique para baixar</span>}
         </button>
       ) : (
         <Download
           key={attempt}
           path={api.mediaPath(chatJid, message.id)}
+          kind={kind}
           label={label}
-          sticker={sticker}
           onRetry={() => setAttempt((a) => a + 1)}
         />
       )}
@@ -57,27 +66,30 @@ export function MediaView({ chatJid, message }: { chatJid: string; message: Mess
 
 interface DownloadProps {
   path: string
+  kind: string
   label: string
-  sticker: boolean
   onRetry: () => void
 }
 
-function Download({ path, label, sticker, onRetry }: DownloadProps) {
-  const img = useImage(path, true)
+function Download({ path, kind, label, onRetry }: DownloadProps) {
+  const file = useImage(path, true)
   const [zoom, setZoom] = useState(false)
 
-  if (img.status === 'ready') {
-    if (sticker) return <img src={img.url} alt={label} />
+  if (file.status === 'ready') {
+    // Vídeo e áudio já tocam: o clique em "baixar" foi o pedido para ver/ouvir.
+    if (kind === 'video') return <video src={file.url} controls autoPlay playsInline />
+    if (kind === 'audio') return <audio src={file.url} controls autoPlay />
+    if (kind === 'sticker') return <img src={file.url} alt={label} />
     return (
       <>
         <button type="button" className="media__open" onClick={() => setZoom(true)} aria-label="Ampliar imagem">
-          <img src={img.url} alt={label} />
+          <img src={file.url} alt={label} />
         </button>
-        {zoom && <Lightbox url={img.url} onClose={() => setZoom(false)} />}
+        {zoom && <Lightbox url={file.url} onClose={() => setZoom(false)} />}
       </>
     )
   }
-  if (img.status === 'none' || img.status === 'error') {
+  if (file.status === 'none' || file.status === 'error') {
     return (
       <button type="button" className="media__download" onClick={onRetry}>
         <span>{label} indisponível</span>

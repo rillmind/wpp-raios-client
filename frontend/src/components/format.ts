@@ -67,6 +67,14 @@ export function formatBytes(n: number): string {
   return `${decimal.format(n / (1024 * 1024))} MB`
 }
 
+/** "0:07", "12:34", "1:02:03". */
+export function formatDuration(total: number): string {
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = String(Math.floor(total % 60)).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
+}
+
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
 const day = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
 

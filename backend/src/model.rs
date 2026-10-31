@@ -115,6 +115,8 @@ pub struct MediaInfo {
   pub mimetype: Option<String>,
   pub width: Option<u32>,
   pub height: Option<u32>,
+  /// Duração (vídeo e áudio).
+  pub seconds: Option<u32>,
 }
 
 /// Referência para baixar uma mídia do CDN do WhatsApp na hora em que for vista.
@@ -122,7 +124,7 @@ pub struct MediaInfo {
 /// Só isto vai para o banco (caminho, chave e hashes); o arquivo nunca é guardado.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaRef {
-  /// `Image` ou `Sticker`.
+  /// `Image`, `Sticker`, `Video` ou `Audio`.
   pub kind: MessageKind,
   pub direct_path: String,
   pub media_key: Option<Vec<u8>>,
@@ -132,6 +134,7 @@ pub struct MediaRef {
   pub mimetype: Option<String>,
   pub width: Option<u32>,
   pub height: Option<u32>,
+  pub seconds: Option<u32>,
 }
 
 impl MediaRef {
@@ -141,6 +144,7 @@ impl MediaRef {
       mimetype: self.mimetype.clone(),
       width: self.width,
       height: self.height,
+      seconds: self.seconds,
     }
   }
 }
