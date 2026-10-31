@@ -1,6 +1,8 @@
 import { Fragment, useLayoutEffect, useRef } from 'react'
 import type { Chat, Message } from '../api/types'
+import { Avatar } from './Avatar'
 import { Composer } from './Composer'
+import { MediaView } from './MediaView'
 import { chatName, formatPhone, formatTime, messageText, senderName } from './format'
 
 export interface ConvState {
@@ -65,6 +67,7 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
         <button type="button" className="btn btn--ghost topbar__back" onClick={onBack} aria-label="Voltar">
           ←
         </button>
+        {chat && <Avatar jid={chat.jid} name={chatName(chat)} size="sm" />}
         <div className="topbar__title">
           <h2 className="topbar__name">{chat ? chatName(chat) : 'Conversa'}</h2>
           {chat?.name && chat.phone && <p className="topbar__sub">{formatPhone(chat.phone)}</p>}
@@ -102,11 +105,24 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
                 <span>mensagens não lidas</span>
               </div>
             )}
-            <div className={m.from_me ? 'bubble bubble--out' : 'bubble bubble--in'}>
+            <div
+              className={[
+                'bubble',
+                m.from_me ? 'bubble--out' : 'bubble--in',
+                m.media && m.kind === 'sticker' ? 'bubble--sticker' : '',
+              ].join(' ')}
+            >
               {isGroup && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
-              <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                {messageText(m)}
-              </span>
+              {m.media ? (
+                <>
+                  <MediaView chatJid={conv.jid} message={m} />
+                  {m.body && <span className="bubble__text">{m.body}</span>}
+                </>
+              ) : (
+                <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
+                  {messageText(m)}
+                </span>
+              )}
               <span className="bubble__meta">
                 {formatTime(m.ts)}
                 {m.from_me && m.status && (

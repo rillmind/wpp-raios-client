@@ -47,6 +47,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** Imagem autenticada; `null` quando não existe (204/404). Outros erros lançam. */
+export async function fetchImage(path: string): Promise<Blob | null> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${getToken() ?? ''}` },
+    cache: 'no-store',
+  })
+  if (res.status === 204 || res.status === 404) return null
+  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  return res.blob()
+}
+
 const enc = encodeURIComponent
 
 export const api = {
@@ -61,5 +72,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  avatarPath: (jid: string) => `/api/chats/${enc(jid)}/avatar`,
+  mediaPath: (jid: string, id: string) => `/api/chats/${enc(jid)}/messages/${enc(id)}/media`,
   eventsUrl: () => `${API_URL}/api/events?token=${enc(getToken() ?? '')}`,
 }
