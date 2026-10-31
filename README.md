@@ -8,11 +8,13 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   conversas num banco SQLite próprio. A interface lê desse banco, por isso abre na hora.
 - Lista as conversas por atividade, com as fixadas no celular no topo (com um alfinete) e um sino
   cortado nas silenciadas, o
-  contador de não lidas, o estado da conexão no topo e, quando a última mensagem é sua, os tiques
+  contador de não lidas e, quando a última mensagem é sua, os tiques
   dela (✓ enviada, ✓✓ entregue, ✓✓ azul lida). Em grupos a prévia diz quem mandou a última
   mensagem ("Carlos: …", "Você: …").
 - Uma barra lateral separa **Conversas**, **Status**, **Canais** e **Arquivadas** (com o número de
-  conversas não lidas, ou um ponto nas outras seções); no celular ela fica embaixo. O botão de Status abre direto a conversa do Status. Status e
+  conversas não lidas, ou um ponto nas outras seções); no celular ela fica embaixo. No fim dela, um
+  pontinho mostra a conexão: verde conectado, amarelo conectando ou servidor desconectado, vermelho
+  sessão encerrada; passar o mouse (ou tocar, no celular) mostra o texto. O botão de Status abre direto a conversa do Status. Status e
   canais são só de leitura: daqui não dá para postar um status nem escrever num canal.
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada

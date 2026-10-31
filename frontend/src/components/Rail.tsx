@@ -5,6 +5,8 @@ interface Props {
   /** Conversas com mensagens não lidas, por seção. */
   unread: Record<Section, number>
   onSection: (s: Section) => void
+  /** Estado da conexão: cor do pontinho e texto do balão. */
+  conn: { level: 'ok' | 'warn' | 'err'; text: string }
 }
 
 const ICON: Record<Section, string> = {
@@ -15,7 +17,7 @@ const ICON: Record<Section, string> = {
 }
 
 /** Barra lateral estreita, com as seções do app. */
-export function Rail({ section, unread, onSection }: Props) {
+export function Rail({ section, unread, onSection, conn }: Props) {
   const item = (s: Section) => (
     <button
       key={s}
@@ -43,7 +45,13 @@ export function Rail({ section, unread, onSection }: Props) {
       {item('channels')}
       <span className="rail__sep" aria-hidden="true" />
       {item('archived')}
-
+      <span
+        className={`rail__conn conn--${conn.level}`}
+        role="status"
+        tabIndex={0}
+        aria-label={conn.text}
+        data-tip={conn.text}
+      />
     </nav>
   )
 }
