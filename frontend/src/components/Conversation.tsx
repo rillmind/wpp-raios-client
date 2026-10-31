@@ -30,6 +30,9 @@ interface Props {
   onMessagePick: (m: Message, pick: MessagePick) => void
 }
 
+/** Dentro disso o duplo clique é do próprio controle (mídia, citação, links). */
+const INTERACTIVE = 'button, a, audio, video, input, textarea'
+
 /** Rola até a mensagem e pisca para achar. */
 function jumpTo(id: string) {
   const el = document.getElementById(`msg-${id}`)
@@ -97,6 +100,7 @@ export function Conversation({
   const unread = chat?.unread_count ?? 0
   const byId = new Map(conv.messages.map((m) => [m.id, m]))
   const pinned = conv.messages.filter((m) => m.pinned).at(-1)
+  const canReply = (m: Message) => !readOnly && m.kind !== 'revoked'
   const who = (m: Message) => (m.from_me ? 'Você' : showSender ? senderName(m) : chat ? chatName(chat) : '')
 
   return (
@@ -150,50 +154,64 @@ export function Conversation({
               </div>
             )}
             <div
-              id={`msg-${m.id}`}
-              className={[
-                'bubble',
-                m.from_me ? 'bubble--out' : 'bubble--in',
-                m.media && m.kind === 'sticker' ? 'bubble--sticker' : '',
-              ].join(' ')}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setMenu({ m, x: e.clientX, y: e.clientY })
+              className={m.from_me ? 'msg-row msg-row--out' : 'msg-row'}
+              // Dois cliques na mensagem ou no espaço ao lado dela: responder.
+              onDoubleClick={(e) => {
+                if (!canReply(m) || (e.target as HTMLElement).closest(INTERACTIVE)) return
+                window.getSelection()?.removeAllRanges()
+                onMessagePick(m, 'reply')
+              }}
+              // Evita que o duplo clique selecione a palavra.
+              onMouseDown={(e) => {
+                if (e.detail > 1 && canReply(m)) e.preventDefault()
               }}
             >
-              {showSender && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
-              {m.quoted_id && (
-                <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
-                  {byId.has(m.quoted_id) ? (
-                    <>
-                      <span className="quote__who">{who(byId.get(m.quoted_id)!)}</span>
-                      <span className="quote__text">{quoteText(byId.get(m.quoted_id)!)}</span>
-                    </>
-                  ) : (
-                    <span className="quote__text">Mensagem citada</span>
-                  )}
-                </button>
-              )}
-              {m.media ? (
-                <>
-                  <MediaView chatJid={conv.jid} message={m} />
-                  {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
-                  {m.body && m.body !== m.media.file_name && <span className="bubble__text">{m.body}</span>}
-                </>
-              ) : (
-                <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                  {messageText(m)}
-                </span>
-              )}
-              <span className="bubble__meta">
-                {m.starred && <span aria-label="Favoritada">★</span>}
-                {formatTime(m.ts)}
-                {m.from_me && m.status && (
-                  <span className={m.status === 'read' ? 'tick tick--read' : 'tick'} aria-label={m.status}>
-                    {STATUS_ICON[m.status]}
+              <div
+                id={`msg-${m.id}`}
+                className={[
+                  'bubble',
+                  m.from_me ? 'bubble--out' : 'bubble--in',
+                  m.media && m.kind === 'sticker' ? 'bubble--sticker' : '',
+                ].join(' ')}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setMenu({ m, x: e.clientX, y: e.clientY })
+                }}
+              >
+                {showSender && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
+                {m.quoted_id && (
+                  <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
+                    {byId.has(m.quoted_id) ? (
+                      <>
+                        <span className="quote__who">{who(byId.get(m.quoted_id)!)}</span>
+                        <span className="quote__text">{quoteText(byId.get(m.quoted_id)!)}</span>
+                      </>
+                    ) : (
+                      <span className="quote__text">Mensagem citada</span>
+                    )}
+                  </button>
+                )}
+                {m.media ? (
+                  <>
+                    <MediaView chatJid={conv.jid} message={m} />
+                    {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
+                    {m.body && m.body !== m.media.file_name && <span className="bubble__text">{m.body}</span>}
+                  </>
+                ) : (
+                  <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
+                    {messageText(m)}
                   </span>
                 )}
-              </span>
+                <span className="bubble__meta">
+                  {m.starred && <span aria-label="Favoritada">★</span>}
+                  {formatTime(m.ts)}
+                  {m.from_me && m.status && (
+                    <span className={m.status === 'read' ? 'tick tick--read' : 'tick'} aria-label={m.status}>
+                      {STATUS_ICON[m.status]}
+                    </span>
+                  )}
+                </span>
+              </div>
             </div>
           </Fragment>
         ))}

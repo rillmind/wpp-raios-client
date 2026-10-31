@@ -39,6 +39,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   desarquivar, fixar ou desafixar, silenciar (8 horas, 1 semana ou para sempre) ou reativar o som
   e marcar como lida ou não lida. Tudo vale também no celular. Apagar ou limpar conversa não
   existe aqui, de propósito.
+- Dois cliques numa mensagem, ou no espaço ao lado dela até a borda (toque duplo no celular),
+  marcam a mensagem para responder.
 - Botão direito numa mensagem (toque longo no Android) abre: responder (citando a mensagem),
   copiar, copiar código (quando a mensagem tem um código de verificação), encaminhar (para até 5
   conversas, sem baixar e reenviar o arquivo), fixar por 24 horas, 7 ou 30 dias, favoritar,

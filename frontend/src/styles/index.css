@@ -344,6 +344,15 @@ code {
   align-self: center;
   color: var(--link);
 }
+/* Linha da mensagem: ocupa a largura toda (dois cliques ao lado também respondem). */
+.msg-row {
+  display: flex;
+  justify-content: flex-start;
+  touch-action: manipulation;
+}
+.msg-row--out {
+  justify-content: flex-end;
+}
 .bubble {
   display: flex;
   flex-direction: column;
