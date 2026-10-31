@@ -28,9 +28,6 @@ pub struct Config {
   /// Máximo de envios por segundo (anti-automação).
   #[serde(default = "default_send_per_sec")]
   pub send_per_sec: u32,
-  /// Máximo de mensagens por chat guardadas da sincronização inicial.
-  #[serde(default = "default_history_msgs_per_chat")]
-  pub history_msgs_per_chat: usize,
   /// Build do front (`frontend/dist`) servido pelo backend; opcional.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub front_dir: Option<PathBuf>,
@@ -54,10 +51,6 @@ fn default_send_per_sec() -> u32 {
   2
 }
 
-fn default_history_msgs_per_chat() -> usize {
-  50
-}
-
 impl Config {
   /// Carrega a configuração, criando o arquivo (com token novo) se não existir.
   pub fn load() -> Result<Self> {
@@ -79,7 +72,6 @@ impl Config {
         token: generate_token()?,
         front_origin: DEFAULT_FRONT_ORIGIN.to_string(),
         send_per_sec: default_send_per_sec(),
-        history_msgs_per_chat: default_history_msgs_per_chat(),
         front_dir: None,
         data_dir: PathBuf::new(),
       };

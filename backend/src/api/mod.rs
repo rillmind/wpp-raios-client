@@ -51,6 +51,7 @@ pub fn router(
     .route("/api/status", get(handlers::status))
     .route("/api/chats", get(handlers::list_chats))
     .route("/api/chats/{jid}/messages", get(handlers::messages))
+    .route("/api/chats/{jid}/load-older", post(handlers::load_older))
     .route("/api/chats/{jid}/read", post(handlers::mark_read))
     .route("/api/chats/{jid}/action", post(handlers::chat_action))
     .route("/api/chats/{jid}/send", post(handlers::send))

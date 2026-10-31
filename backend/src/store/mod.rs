@@ -253,6 +253,23 @@ impl Db {
     Ok(changed)
   }
 
+  /// Mensagem mais antiga guardada da conversa (ponto de partida para pedir as anteriores).
+  pub fn oldest_message(&self, chat_jid: &str) -> Result<Option<Message>> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          &format!(
+            "{} WHERE m.chat_jid = ?1 ORDER BY m.ts ASC, m.rowid ASC LIMIT 1",
+            msg_select()
+          ),
+          params![chat_jid],
+          message_from_row,
+        )
+        .optional()?,
+    )
+  }
+
   pub fn get_message(&self, chat_jid: &str, id: &str) -> Result<Option<Message>> {
     Ok(
       self

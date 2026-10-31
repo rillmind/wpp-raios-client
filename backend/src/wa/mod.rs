@@ -54,6 +54,8 @@ pub enum WaEvent {
     messages: Vec<Message>,
     /// Referências de mídia por id de mensagem.
     media: Vec<(String, MediaRef)>,
+    /// Resposta a um pedido de mensagens antigas (não muda contador nem chat).
+    on_demand: bool,
   },
   /// Recibo de mensagem enviada por nós.
   Status {
@@ -125,6 +127,10 @@ pub trait WhatsApp: Send + Sync {
 
   /// Encaminha uma mensagem (texto ou mídia, sem subir o arquivo de novo).
   async fn forward(&self, to_jid: &str, msg: &Message, media: Option<&MediaRef>) -> Result<Sent>;
+
+  /// Pede ao celular até `count` mensagens anteriores a `anchor`; elas chegam depois,
+  /// como [`WaEvent::HistoryChat`] com `on_demand`.
+  async fn request_history(&self, anchor: &Message, count: u32) -> Result<()>;
 
   /// Arquiva, fixa, silencia ou marca como não lida, também no celular.
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()>;

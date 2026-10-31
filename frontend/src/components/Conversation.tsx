@@ -13,6 +13,8 @@ export interface ConvState {
   hasMore: boolean
   loading: boolean
   error: string | null
+  /** Esperando o celular mandar mensagens antigas. */
+  pending: boolean
 }
 
 interface Props {
@@ -135,10 +137,22 @@ export function Conversation({
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
         }}
       >
-        {conv.hasMore && (
-          <button type="button" className="btn btn--ghost load-older" onClick={() => void loadOlder()}>
-            Carregar anteriores
+        {conv.hasMore && !conv.loading && (
+          <button
+            type="button"
+            className="btn btn--ghost load-older"
+            disabled={conv.pending}
+            onClick={() => void loadOlder()}
+          >
+            {conv.pending
+              ? 'Pedindo ao celular…'
+              : conv.messages.length === 0
+                ? 'Carregar mensagens'
+                : 'Carregar anteriores'}
           </button>
+        )}
+        {!conv.hasMore && !conv.loading && conv.messages.length === 0 && (
+          <p className="empty">Nenhuma mensagem.</p>
         )}
         {conv.loading && <p className="empty">Carregando…</p>}
         {conv.error && (

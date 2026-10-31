@@ -42,10 +42,12 @@ O backend converte cada conversa em `WaEvent::HistoryChat` (`backend/src/wa/what
   (`wacore/src/store/device.rs`): o proto `HistorySyncConfig` tem `recentSyncDaysLimit`,
   `initialSyncMaxMessagesPerChat`, `fullSyncDaysLimit` etc. Pedido ao servidor; não está claro
   quanto ele respeita. Não usado por enquanto.
-- No nosso lado (o que está implementado): só aceitamos `INITIAL_BOOTSTRAP`, `RECENT` e
-  `PUSH_NAME`; `FULL` e `ON_DEMAND` são ignorados; e guardamos no máximo
-  `history_msgs_per_chat` (padrão 50) mensagens por chat. As `unreadCount` recebidas mais
-  recentes ficam marcadas como não lidas.
+- No nosso lado (o que está implementado): aceitamos `INITIAL_BOOTSTRAP`, `RECENT`, `PUSH_NAME` e
+  `ON_DEMAND`; `FULL` é ignorado. Da sincronização inicial guardamos só as `unreadCount`
+  recebidas mais recentes (as não lidas) e a mensagem mais nova de cada chat, que serve de
+  âncora para `Client::fetch_message_history(chat, id, from_me, ts_ms, count)`: o celular responde
+  com um pacote `ON_DEMAND` (no teste real, 20 mensagens em ~3 s), gravado como lido e sem mexer
+  no contador nem na prévia.
 
 ## 3. Mensagens recebidas com o backend offline são entregues ao reconectar?
 

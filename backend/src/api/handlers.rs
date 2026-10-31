@@ -85,6 +85,8 @@ pub async fn list_chats(
 pub struct MessagesQuery {
   limit: Option<u32>,
   before: Option<i64>,
+  /// Só as não lidas (e o que veio depois delas): é como a conversa abre.
+  unread_only: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -109,6 +111,21 @@ pub async fn messages(
         return Ok(None);
       }
       let first_unread = db.first_unread(&jid)?;
+      if q.unread_only == Some(true) {
+        // As anteriores ficam para o "carregar mensagens" (do banco ou do celular).
+        let messages = match &first_unread {
+          Some(fu) => {
+            let n = db.count_since(&jid, fu.ts)?.min(MAX_UNREAD_PAGE);
+            db.last_messages(&jid, n, None)?
+          }
+          None => vec![],
+        };
+        return Ok(Some(MessagesResponse {
+          messages,
+          first_unread_id: first_unread.map(|m| m.id),
+          has_more: true,
+        }));
+      }
       // Na primeira página, garante que todas as não lidas venham.
       let mut page = limit;
       if q.before.is_none() {
@@ -130,6 +147,65 @@ pub async fn messages(
     .await?
     .ok_or(ApiError::NotFound)?;
   Ok(Json(resp))
+}
+
+#[derive(Deserialize)]
+pub struct LoadOlderBody {
+  /// Mensagens antes deste instante (a mais antiga na tela); sem ele, as mais novas.
+  before: Option<i64>,
+  count: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct LoadOlderResponse {
+  /// O que já estava guardado.
+  messages: Vec<Message>,
+  /// Faltou: o resto foi pedido ao celular e chega pelo evento `history.loaded`.
+  requested: bool,
+}
+
+const DEFAULT_LOAD_OLDER: u32 = 20;
+const MAX_LOAD_OLDER: u32 = 50;
+
+/// "Carregar mensagens": devolve as guardadas e, se faltar, pede as anteriores ao celular.
+pub async fn load_older(
+  State(st): State<AppState>,
+  Path(jid): Path<String>,
+  Json(body): Json<LoadOlderBody>,
+) -> ApiResult<Json<LoadOlderResponse>> {
+  validate_jid(&jid)?;
+  let count = clamp_limit(body.count, DEFAULT_LOAD_OLDER, MAX_LOAD_OLDER)?;
+  let j = jid.clone();
+  let (messages, anchor) = st
+    .store
+    .run(move |db| {
+      if db.get_chat(&j)?.is_none() {
+        return Ok(None);
+      }
+      Ok(Some((
+        db.last_messages(&j, count, body.before)?,
+        db.oldest_message(&j)?,
+      )))
+    })
+    .await?
+    .ok_or(ApiError::NotFound)?;
+  let missing = count.saturating_sub(messages.len() as u32);
+  // Sem nenhuma mensagem guardada não há de onde partir o pedido ao celular.
+  let requested = match (&anchor, missing) {
+    (Some(anchor), n) if n > 0 && !is_read_only(&jid) => {
+      ensure_connected(&st)?;
+      st.wa
+        .request_history(anchor, n)
+        .await
+        .map_err(ApiError::Upstream)?;
+      true
+    }
+    _ => false,
+  };
+  Ok(Json(LoadOlderResponse {
+    messages,
+    requested,
+  }))
 }
 
 pub async fn mark_read(

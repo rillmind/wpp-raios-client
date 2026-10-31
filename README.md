@@ -52,8 +52,11 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
   abrir não marca nada: só o botão "Marcar como lida" faz isso.
-- Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
-  sincronização inicial). O histórico antigo continua no celular.
+- Guarda o que chega a partir do pareamento. Da sincronização inicial, guarda só as mensagens
+  não lidas (e a última de cada conversa, como ponto de partida). A conversa abre só com as não
+  lidas; sem nenhuma, abre vazia com o botão "Carregar mensagens", que mostra as 20 anteriores,
+  pedindo ao celular o que não estiver guardado (o celular precisa estar ligado e com internet;
+  chegam em alguns segundos). Cada clique traz mais 20.
 - Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
   entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 
@@ -147,6 +150,5 @@ sobrescrevem:
 | `front_origin` | `WPP_FRONT_ORIGIN` | `http://127.0.0.1:5173` | origem aceita no CORS (dev) |
 | `front_dir` | `WPP_FRONT_DIR` | — | serve o build da interface na mesma porta |
 | `send_per_sec` | — | `2` | limite de envios por segundo |
-| `history_msgs_per_chat` | — | `50` | mensagens por conversa guardadas da sincronização inicial |
 
 Backup, troca de número, API e CI: [`docs/OPERACAO.md`](docs/OPERACAO.md).
