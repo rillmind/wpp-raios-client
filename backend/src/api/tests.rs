@@ -13,7 +13,7 @@ use tower::ServiceExt;
 use super::*;
 use crate::model::{ChatAction, ConnState, MediaRef, Message, MessageKind};
 use crate::store::Db;
-use crate::wa::{Sent, UnreadRef};
+use crate::wa::{OutgoingMedia, Sent, UnreadRef};
 
 const TOKEN: &str = "segredo";
 const ORIGIN: &str = "http://127.0.0.1:5173";
@@ -25,6 +25,7 @@ struct FakeWa {
   read: Mutex<Vec<(String, Vec<String>)>>,
   offline: bool,
   actions: Mutex<Vec<(String, ChatAction)>>,
+  uploads: Mutex<Vec<OutgoingMedia>>,
   /// Com QR: o "WhatsApp" está esperando o pareamento.
   qr: Option<String>,
 }
@@ -52,6 +53,31 @@ impl WhatsApp for FakeWa {
       id: format!("out-{}", sent.len()),
       ts: 1_000,
     })
+  }
+
+  async fn send_media(&self, _chat_jid: &str, media: OutgoingMedia) -> Result<(Sent, MediaRef)> {
+    let mut uploads = self.uploads.lock().unwrap();
+    let r = MediaRef {
+      kind: media.kind,
+      direct_path: "/up/1".into(),
+      media_key: Some(vec![1; 32]),
+      file_sha256: vec![2; 32],
+      file_enc_sha256: Some(vec![3; 32]),
+      file_length: media.bytes.len() as u64,
+      mimetype: Some(media.mimetype.clone()),
+      width: media.width,
+      height: media.height,
+      seconds: media.seconds,
+      file_name: media.file_name.clone(),
+    };
+    uploads.push(media);
+    Ok((
+      Sent {
+        id: format!("up-{}", uploads.len()),
+        ts: 2_000,
+      },
+      r,
+    ))
   }
 
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
@@ -509,6 +535,7 @@ fn media_ref(kind: MessageKind, mimetype: &str) -> MediaRef {
     width: Some(800),
     height: Some(600),
     seconds: None,
+    file_name: None,
   }
 }
 
@@ -533,7 +560,14 @@ async fn media_is_downloaded_on_demand_and_not_cached() {
   let msgs = json["messages"].as_array().unwrap();
   assert_eq!(
     msgs[0]["media"],
-    json!({ "size": 10, "mimetype": "image/jpeg", "width": 800, "height": 600, "seconds": null })
+    json!({
+      "size": 10,
+      "mimetype": "image/jpeg",
+      "width": 800,
+      "height": 600,
+      "seconds": null,
+      "file_name": null
+    })
   );
   assert!(msgs[2].get("media").is_none(), "texto não tem mídia");
 
@@ -715,4 +749,105 @@ async fn chat_actions_go_to_whatsapp_then_to_the_list() {
   )
   .await;
   assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// POST com corpo cru (arquivo) e Content-Type.
+async fn post_file(h: &Harness, uri: &str, mime: &str, bytes: &[u8]) -> (StatusCode, Value) {
+  let req = Request::post(uri)
+    .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+    .header(header::CONTENT_TYPE, mime)
+    .body(Body::from(bytes.to_vec()))
+    .unwrap();
+  let resp = h.app.clone().oneshot(req).await.unwrap();
+  let status = resp.status();
+  let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+  (
+    status,
+    serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+  )
+}
+
+#[tokio::test]
+async fn sends_files_as_image_video_or_document() {
+  let h = harness();
+  let (status, msg) = post_file(
+    &h,
+    &format!("/api/chats/{A}/send-media?name=foto.png&caption=%20olha%20&width=640&height=480"),
+    "image/png",
+    b"png",
+  )
+  .await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(msg["kind"], "image");
+  assert_eq!(msg["body"], "olha");
+  assert_eq!(msg["media"]["width"], 640);
+
+  let (_, msg) = post_file(
+    &h,
+    &format!("/api/chats/{A}/send-media?seconds=5"),
+    "video/mp4",
+    b"mp4",
+  )
+  .await;
+  assert_eq!(msg["kind"], "video");
+
+  let kinds: Vec<MessageKind> = h
+    .wa
+    .uploads
+    .lock()
+    .unwrap()
+    .iter()
+    .map(|u| u.kind)
+    .collect();
+  assert_eq!(kinds, vec![MessageKind::Image, MessageKind::Video]);
+}
+
+#[tokio::test]
+async fn send_media_refuses_empty_and_read_only_chats() {
+  let h = harness();
+  let (status, _) = post_file(&h, &format!("/api/chats/{A}/send-media"), "image/png", b"").await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (status, _) = post_file(
+    &h,
+    "/api/chats/status@broadcast/send-media",
+    "image/png",
+    b"x",
+  )
+  .await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  assert!(h.wa.uploads.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn sent_document_is_downloaded_as_attachment() {
+  let h = harness();
+  // GIF vai como documento; sem legenda, o corpo é o nome do arquivo.
+  let (_, msg) = post_file(
+    &h,
+    &format!("/api/chats/{A}/send-media?name=rel%C3%A1t%C3%B3rio%20final.gif"),
+    "image/gif",
+    b"gif",
+  )
+  .await;
+  assert_eq!(msg["kind"], "doc");
+  assert_eq!(msg["body"], "relátório final.gif");
+  let id = msg["id"].as_str().unwrap().to_string();
+
+  // O que foi enviado entra na conversa e pode ser baixado de novo; documento sempre
+  // como anexo.
+  let (_, page) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  assert_eq!(page["messages"].as_array().unwrap().len(), 1);
+  let req = Request::get(format!("/api/chats/{A}/messages/{id}/media"))
+    .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+    .body(Body::empty())
+    .unwrap();
+  let resp = h.app.clone().oneshot(req).await.unwrap();
+  assert_eq!(
+    resp.headers()[header::CONTENT_TYPE],
+    "application/octet-stream"
+  );
+  assert_eq!(
+    resp.headers()[header::CONTENT_DISPOSITION],
+    "attachment; filename*=UTF-8''rel%C3%A1t%C3%B3rio%20final.gif"
+  );
 }

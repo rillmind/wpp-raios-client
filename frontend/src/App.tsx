@@ -4,6 +4,7 @@ import type { Chat, ConnState, ServerEvent } from './api/types'
 import { useEvents } from './api/useEvents'
 import { ChatList } from './components/ChatList'
 import { ChatMenu, type MenuAction } from './components/ChatMenu'
+import type { FileMeta } from './components/Composer'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -237,6 +238,19 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   }
 
+  async function sendFile(file: File, caption: string | null, meta: FileMeta) {
+    if (!selected) return
+    const jid = selected
+    try {
+      const m = await api.sendMedia(jid, file, { caption, ...meta })
+      setConv((c) =>
+        c?.jid === jid && !c.messages.some((x) => x.id === m.id) ? { ...c, messages: [...c.messages, m] } : c,
+      )
+    } catch (e) {
+      throw new Error(fail(e))
+    }
+  }
+
   async function send(text: string) {
     if (!selected) return
     const jid = selected
@@ -323,6 +337,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             onLoadOlder={loadOlder}
             onMarkRead={() => markRead(conv.jid)}
             onSend={send}
+            onSendFile={sendFile}
           />
         ) : conn === 'waiting_qr' ? (
           <MainPairing />

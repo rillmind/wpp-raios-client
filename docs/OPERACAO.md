@@ -37,11 +37,12 @@ Tudo em `127.0.0.1`. As rotas exigem `Authorization: Bearer <token>`; só `/api/
 | `GET /api/status` | `{ state, connected }` |
 | `GET /api/chats?limit=&before_ts=` | conversas por atividade, com `name` e `phone` |
 | `GET /api/chats/{jid}/messages?limit=&before=` | últimas mensagens do banco local + `first_unread_id`; a primeira página sempre inclui todas as não lidas. Mensagens com imagem/figurinha trazem `media` |
-| `GET /api/chats/{jid}/messages/{id}/media` | baixa a imagem, figurinha, vídeo ou áudio do WhatsApp na hora (`Cache-Control: no-store`; até 32 MB, vídeo até 100 MB) |
+| `GET /api/chats/{jid}/messages/{id}/media` | baixa a imagem, figurinha, vídeo, áudio ou documento do WhatsApp na hora (`Cache-Control: no-store`; documento sempre como anexo; até 32 MB, vídeo até 100 MB) |
 | `GET /api/chats/{jid}/avatar` | foto de perfil, buscada na hora; `204` se não houver |
 | `POST /api/chats/{jid}/read` | recibos de leitura + marca lido no celular |
 | `POST /api/chats/{jid}/action` | `{ "action": "archive" \| "unarchive" \| "pin" \| "unpin" \| "mute" \| "unmute" \| "unread", "hours"? }` (`hours` só em `mute`; sem ele, para sempre) |
 | `POST /api/chats/{jid}/send` | `{ "text": "..." }`, uma mensagem por requisição |
+| `POST /api/chats/{jid}/send-media?name=&caption=&width=&height=&seconds=` | corpo = o arquivo, `Content-Type` = o tipo; até 100 MB. JPEG/PNG vão como imagem, MP4 como vídeo, o resto como documento |
 | `GET /api/events` | SSE: `message.new`, `message.status`, `chat.updated`, `connection.state` (e `resync`) |
 
 Logs em nível `info` não têm conteúdo de mensagens.

@@ -9,7 +9,7 @@ mod tests;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -54,6 +54,10 @@ pub fn router(
     .route("/api/chats/{jid}/read", post(handlers::mark_read))
     .route("/api/chats/{jid}/action", post(handlers::chat_action))
     .route("/api/chats/{jid}/send", post(handlers::send))
+    .route(
+      "/api/chats/{jid}/send-media",
+      post(handlers::send_media).layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
+    )
     .route("/api/chats/{jid}/avatar", get(handlers::avatar))
     .route("/api/chats/{jid}/messages/{id}/media", get(handlers::media))
     .route("/api/events", get(handlers::events))

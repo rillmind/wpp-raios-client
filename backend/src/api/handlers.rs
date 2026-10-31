@@ -1,8 +1,9 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -15,7 +16,7 @@ use super::error::{ApiError, ApiResult};
 use super::{ApiEvent, AppState};
 use crate::model::{ChatAction, ConnState, Message, MessageKind, MsgStatus};
 use crate::store::ChatSummary;
-use crate::wa::UnreadRef;
+use crate::wa::{OutgoingMedia, UnreadRef};
 
 const DEFAULT_CHATS: u32 = 100;
 const MAX_CHATS: u32 = 500;
@@ -27,6 +28,9 @@ const MAX_TEXT_CHARS: usize = 4096;
 /// Mídias maiores que isso não são baixadas (o arquivo passa inteiro pela memória).
 const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_VIDEO_BYTES: u64 = 100 * 1024 * 1024;
+/// Maior arquivo aceito para envio (o mesmo limite do WhatsApp para mídia).
+pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const MAX_FILE_NAME_CHARS: usize = 200;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -239,7 +243,7 @@ pub async fn send(
 ) -> ApiResult<Json<Message>> {
   validate_jid(&jid)?;
   // Enviar para `status@broadcast` publicaria um status; canais são de leitura.
-  if jid == "status@broadcast" || jid.ends_with("@newsletter") {
+  if is_read_only(&jid) {
     return Err(ApiError::BadRequest(
       "status e canais são só de leitura".into(),
     ));
@@ -318,6 +322,9 @@ pub async fn media(
     .download_media(&media)
     .await
     .map_err(ApiError::Upstream)?;
+  if media.kind == MessageKind::Doc {
+    return Ok(attachment_response(bytes, media.file_name.as_deref()));
+  }
   Ok(media_response(
     bytes,
     media_type(media.mimetype.as_deref(), media.kind),
@@ -352,6 +359,36 @@ fn media_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
     .into_response()
 }
 
+/// Documento: sempre como download (`attachment`, octet-stream), nunca aberto no
+/// navegador, que é como um HTML ou SVG mandado por alguém conseguiria rodar código.
+fn attachment_response(bytes: Vec<u8>, file_name: Option<&str>) -> Response {
+  let name = file_name.unwrap_or("documento");
+  let disposition = format!("attachment; filename*=UTF-8''{}", percent_encode(name));
+  (
+    [
+      (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+      (header::CONTENT_DISPOSITION, disposition),
+      (header::CACHE_CONTROL, "no-store".to_string()),
+      (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+    ],
+    bytes,
+  )
+    .into_response()
+}
+
+/// RFC 5987: tudo fora de `A-Za-z0-9-._~` vira `%XX` (bytes UTF-8).
+fn percent_encode(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  for b in s.bytes() {
+    if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+      out.push(b as char);
+    } else {
+      out.push_str(&format!("%{b:02X}"));
+    }
+  }
+  out
+}
+
 /// O mimetype vem de quem mandou a mensagem: só tipos conhecidos do mesmo tipo de
 /// mídia passam (nada de `text/html`); o resto cai no padrão daquele tipo.
 fn media_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
@@ -378,6 +415,136 @@ fn media_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
       _ => "image/jpeg",
     },
   }
+}
+
+#[derive(Deserialize)]
+pub struct SendMediaQuery {
+  /// Nome do arquivo (documentos mostram e salvam com ele).
+  name: Option<String>,
+  caption: Option<String>,
+  width: Option<u32>,
+  height: Option<u32>,
+  seconds: Option<u32>,
+}
+
+/// Envia um arquivo: o corpo é o arquivo; `Content-Type` diz o tipo.
+pub async fn send_media(
+  State(st): State<AppState>,
+  Path(jid): Path<String>,
+  Query(q): Query<SendMediaQuery>,
+  headers: HeaderMap,
+  body: Bytes,
+) -> ApiResult<Json<Message>> {
+  validate_jid(&jid)?;
+  if is_read_only(&jid) {
+    return Err(ApiError::BadRequest(
+      "status e canais são só de leitura".into(),
+    ));
+  }
+  if body.is_empty() {
+    return Err(ApiError::BadRequest("arquivo vazio".into()));
+  }
+  let mimetype = headers
+    .get(header::CONTENT_TYPE)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|v| v.split(';').next())
+    .map(|v| v.trim().to_ascii_lowercase())
+    .filter(|v| !v.is_empty())
+    .unwrap_or_else(|| "application/octet-stream".into());
+  let kind = outgoing_kind(&mimetype);
+  let caption = q
+    .caption
+    .as_deref()
+    .map(str::trim)
+    .filter(|c| !c.is_empty())
+    .map(str::to_string);
+  if caption
+    .as_ref()
+    .is_some_and(|c| c.chars().count() > MAX_TEXT_CHARS)
+  {
+    return Err(ApiError::BadRequest(format!(
+      "legenda acima de {MAX_TEXT_CHARS} caracteres"
+    )));
+  }
+  let file_name = q
+    .name
+    .as_deref()
+    .map(|n| {
+      n.trim()
+        .chars()
+        .take(MAX_FILE_NAME_CHARS)
+        .collect::<String>()
+    })
+    .filter(|n| !n.is_empty());
+  ensure_connected(&st)?;
+  if !st.limiter.try_acquire() {
+    return Err(ApiError::RateLimited);
+  }
+
+  let (sent, media) = st
+    .wa
+    .send_media(
+      &jid,
+      OutgoingMedia {
+        kind,
+        bytes: body.to_vec(),
+        mimetype,
+        file_name: file_name.clone(),
+        caption: caption.clone(),
+        width: q.width,
+        height: q.height,
+        seconds: q.seconds,
+      },
+    )
+    .await
+    .map_err(ApiError::Upstream)?;
+  let msg = Message {
+    id: sent.id,
+    chat_jid: jid.clone(),
+    sender_jid: None,
+    sender_name: None,
+    from_me: true,
+    ts: sent.ts,
+    kind,
+    // Documento sem legenda mostra o nome do arquivo, como os recebidos.
+    body: caption.or(if kind == MessageKind::Doc {
+      file_name
+    } else {
+      None
+    }),
+    quoted_id: None,
+    status: Some(MsgStatus::Sent),
+    is_read: true,
+    media: Some(media.info()),
+  };
+  let m = msg.clone();
+  let chat = st
+    .store
+    .run(move |db| {
+      db.insert_media(&m.chat_jid, &m.id, &media)?;
+      db.insert_message(&m)?;
+      db.get_chat(&m.chat_jid)
+    })
+    .await?;
+  let _ = st.events.send(ApiEvent::MessageNew(msg.clone()));
+  if let Some(chat) = chat {
+    let _ = st.events.send(ApiEvent::ChatUpdated(chat));
+  }
+  Ok(Json(msg))
+}
+
+/// Como o arquivo vai para o WhatsApp: JPEG/PNG como imagem, MP4 como vídeo; o resto
+/// (inclusive GIF e WebP, que o WhatsApp não trata como foto) vai como documento.
+fn outgoing_kind(mimetype: &str) -> MessageKind {
+  match mimetype {
+    "image/jpeg" | "image/png" => MessageKind::Image,
+    "video/mp4" => MessageKind::Video,
+    _ => MessageKind::Doc,
+  }
+}
+
+fn is_read_only(jid: &str) -> bool {
+  jid == "status@broadcast" || jid.ends_with("@newsletter")
 }
 
 pub async fn events(

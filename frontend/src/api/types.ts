@@ -47,6 +47,8 @@ export interface MediaInfo {
   height: number | null
   /** Duração em segundos (vídeo e áudio). */
   seconds: number | null
+  /** Nome do arquivo (documento). */
+  file_name: string | null
 }
 
 export interface MessagesPage {

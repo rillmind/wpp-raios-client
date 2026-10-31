@@ -19,15 +19,20 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem.
 - Mostra as fotos de perfil, que carregam sozinhas.
-- Imagens, figurinhas, vídeos e áudios aparecem como um botão com o tamanho do arquivo (e a
-  duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem abre na
-  conversa (clique para ampliar); vídeo e áudio começam a tocar no player do navegador. Ficam só
-  na memória da aba: nada vai para o disco nem para o banco (o banco guarda só a referência para
-  baixar). Fechou a aba, sumiram. Figurinhas animadas vetoriais aparecem como `[figurinha]`, e
-  mídias recebidas antes desta versão como `[imagem]`, `[vídeo]` etc.
+- Imagens, figurinhas, vídeos, áudios e documentos aparecem como um botão com o tamanho do
+  arquivo (e a duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem
+  abre na conversa (clique para ampliar); vídeo e áudio começam a tocar no player do navegador;
+  documento o navegador oferece para salvar. Ficam só na memória da aba: nada vai para o disco
+  nem para o banco (o banco guarda só a referência para baixar). Fechou a aba, sumiram.
+  Figurinhas animadas vetoriais aparecem como `[figurinha]`, e mídias recebidas antes desta versão
+  como `[imagem]`, `[vídeo]` etc.
 - Abre a conversa na primeira mensagem não lida, com um separador, e com a caixa de mensagem já
   selecionada (em telas de toque não, para não abrir o teclado). Esc fecha a conversa e volta à
   tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
+- Envia imagens, vídeos e documentos: pelo clipe ao lado da caixa de mensagem ou colando
+  (Ctrl+V) uma imagem ou arquivo copiado, como um print. Os arquivos aparecem antes de enviar (dá
+  para tirar), o texto escrito vira a legenda do primeiro, e vão ao clicar em "Enviar". JPEG e PNG
+  vão como foto, MP4 como vídeo e o resto (inclusive GIF) como documento, até 100 MB.
 - Envia mensagens de texto. No computador, Enter envia e Shift+Enter quebra linha; no celular,
   Enter quebra linha, só o botão "Enviar" envia, e o teclado continua aberto depois do envio. Cada conversa tem o seu
   rascunho: trocar de conversa não leva o texto junto.
@@ -40,7 +45,6 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   abrir não marca nada: só o botão "Marcar como lida" faz isso.
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
   sincronização inicial). O histórico antigo continua no celular.
-- Documentos aparecem como `[documento]`.
 - Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
   entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 

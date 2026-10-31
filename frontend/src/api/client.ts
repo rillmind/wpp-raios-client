@@ -93,5 +93,33 @@ export const api = {
     }),
   avatarPath: (jid: string) => `/api/chats/${enc(jid)}/avatar`,
   mediaPath: (jid: string, id: string) => `/api/chats/${enc(jid)}/messages/${enc(id)}/media`,
+  /** Envia um arquivo; o tipo (imagem, vídeo ou documento) sai do `Content-Type`. */
+  sendMedia: (
+    jid: string,
+    file: File,
+    opts: { caption?: string | null; width?: number; height?: number; seconds?: number },
+  ) => {
+    const q = new URLSearchParams()
+    if (file.name) q.set('name', file.name)
+    if (opts.caption) q.set('caption', opts.caption)
+    for (const k of ['width', 'height', 'seconds'] as const) {
+      const v = opts[k]
+      if (v) q.set(k, String(v))
+    }
+    return fetch(`${API_URL}/api/chats/${enc(jid)}/send-media?${q}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getToken() ?? ''}`,
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+      body: file,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new ApiError(res.status, body?.error ?? res.statusText)
+      }
+      return res.json() as Promise<Message>
+    })
+  },
   eventsUrl: () => `${API_URL}/api/events?token=${enc(getToken() ?? '')}`,
 }

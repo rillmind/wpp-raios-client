@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useRef } from 'react'
 import type { Chat, Message } from '../api/types'
 import { Avatar } from './Avatar'
-import { Composer } from './Composer'
+import { Composer, type FileMeta } from './Composer'
 import { MediaView } from './MediaView'
 import { chatName, formatPhone, formatTime, isReadOnly, messageText, senderName } from './format'
 
@@ -22,11 +22,21 @@ interface Props {
   onLoadOlder: () => Promise<void>
   onMarkRead: () => Promise<void>
   onSend: (text: string) => Promise<void>
+  onSendFile: (file: File, caption: string | null, meta: FileMeta) => Promise<void>
 }
 
 const STATUS_ICON: Record<string, string> = { sent: '✓', delivered: '✓✓', read: '✓✓' }
 
-export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMarkRead, onSend }: Props) {
+export function Conversation({
+  chat,
+  conv,
+  connected,
+  onBack,
+  onLoadOlder,
+  onMarkRead,
+  onSend,
+  onSendFile,
+}: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const positioned = useRef<string | null>(null)
   const restore = useRef<number | null>(null)
@@ -119,7 +129,8 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
               {m.media ? (
                 <>
                   <MediaView chatJid={conv.jid} message={m} />
-                  {m.body && <span className="bubble__text">{m.body}</span>}
+                  {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
+                  {m.body && m.body !== m.media.file_name && <span className="bubble__text">{m.body}</span>}
                 </>
               ) : (
                 <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
@@ -142,7 +153,7 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
       {readOnly ? (
         <p className="readonly-note">Status e canais são só de leitura aqui.</p>
       ) : (
-        <Composer key={conv.jid} disabled={!connected} onSend={onSend} />
+        <Composer key={conv.jid} disabled={!connected} onSend={onSend} onSendFile={onSendFile} />
       )}
     </section>
   )

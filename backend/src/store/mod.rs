@@ -257,8 +257,8 @@ impl Db {
   pub fn insert_media(&self, chat_jid: &str, msg_id: &str, m: &MediaRef) -> Result<()> {
     self.conn.execute(
       "INSERT INTO media (chat_jid, msg_id, kind, direct_path, media_key, file_sha256,
-         file_enc_sha256, file_length, mimetype, width, height, seconds)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         file_enc_sha256, file_length, mimetype, width, height, seconds, file_name)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
        ON CONFLICT(chat_jid, msg_id) DO NOTHING",
       params![
         chat_jid,
@@ -273,6 +273,7 @@ impl Db {
         m.width,
         m.height,
         m.seconds,
+        m.file_name,
       ],
     )?;
     Ok(())
@@ -284,7 +285,7 @@ impl Db {
         .conn
         .query_row(
           "SELECT kind, direct_path, media_key, file_sha256, file_enc_sha256, file_length,
-             mimetype, width, height, seconds
+             mimetype, width, height, seconds, file_name
            FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
           params![chat_jid, msg_id],
           |r| {
@@ -301,6 +302,7 @@ impl Db {
               width: r.get(7)?,
               height: r.get(8)?,
               seconds: r.get(9)?,
+              file_name: r.get(10)?,
             })
           },
         )
@@ -594,7 +596,7 @@ fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
        m.status, m.is_read, {},
-       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds, md.file_name
      FROM messages m
      LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
@@ -663,6 +665,7 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
         width: r.get(14)?,
         height: r.get(15)?,
         seconds: r.get(17)?,
+        file_name: r.get(18)?,
       })
     } else {
       None

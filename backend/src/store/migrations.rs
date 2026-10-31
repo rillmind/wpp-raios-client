@@ -82,6 +82,8 @@ pub(super) const MIGRATIONS: &[&str] = &[
   "ALTER TABLE media ADD COLUMN seconds INTEGER;",
   // 6: silenciada até (ms desde 1970); -1 = para sempre, NULL/0 = não silenciada.
   "ALTER TABLE chats ADD COLUMN muted_until INTEGER;",
+  // 7: documentos também são baixados na hora; o nome do arquivo vai junto.
+  "ALTER TABLE media ADD COLUMN file_name TEXT;",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

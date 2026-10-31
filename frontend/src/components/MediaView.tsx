@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { api } from '../api/client'
 import { useImage } from '../api/images'
 import type { Message } from '../api/types'
@@ -14,12 +14,13 @@ const LABEL: Record<string, string> = {
   sticker: 'Figurinha',
   video: 'Vídeo',
   audio: 'Áudio',
+  doc: 'Documento',
 }
 
 /** Caixa com a proporção da mídia, para a conversa não pular quando ela chegar. */
 function boxSize(m: Message): CSSProperties {
   if (m.kind === 'sticker') return { width: STICKER, height: STICKER }
-  if (m.kind === 'audio') return { width: AUDIO_W }
+  if (m.kind === 'audio' || m.kind === 'doc') return { width: AUDIO_W }
   const w = m.media?.width ?? 0
   const h = m.media?.height ?? 0
   if (!w || !h) return { width: MAX_W, height: Math.round(MAX_W * 0.75) }
@@ -35,7 +36,7 @@ export function MediaView({ chatJid, message }: { chatJid: string; message: Mess
   // Cada tentativa remonta o download (uma falha não fica em cache).
   const [attempt, setAttempt] = useState(0)
   const kind = message.kind
-  const label = LABEL[kind] ?? 'Mídia'
+  const label = kind === 'doc' ? (message.media?.file_name ?? LABEL.doc) : (LABEL[kind] ?? 'Mídia')
   const details = [
     message.media?.seconds ? formatDuration(message.media.seconds) : null,
     message.media?.size ? formatBytes(message.media.size) : null,
@@ -46,10 +47,10 @@ export function MediaView({ chatJid, message }: { chatJid: string; message: Mess
       {attempt === 0 ? (
         <button type="button" className="media__download" onClick={() => setAttempt(1)}>
           <span className="media__icon" aria-hidden="true">
-            {kind === 'audio' || kind === 'video' ? '▶' : '↓'}
+            {kind === 'audio' || kind === 'video' ? '▶' : kind === 'doc' ? '📄' : '↓'}
           </span>
-          <span>{[label, ...details].join(' · ')}</span>
-          {kind !== 'audio' && <span className="media__hint">Clique para baixar</span>}
+          <span className="media__label">{[label, ...details].join(' · ')}</span>
+          {kind !== 'audio' && kind !== 'doc' && <span className="media__hint">Clique para baixar</span>}
         </button>
       ) : (
         <Download
@@ -74,11 +75,28 @@ interface DownloadProps {
 function Download({ path, kind, label, onRetry }: DownloadProps) {
   const file = useImage(path, true)
   const [zoom, setZoom] = useState(false)
+  const save = useRef<HTMLAnchorElement>(null)
+
+  // Documento: assim que baixa, entrega ao navegador para salvar (uma vez).
+  const readyUrl = file.status === 'ready' ? file.url : null
+  useEffect(() => {
+    if (kind === 'doc' && readyUrl) save.current?.click()
+  }, [kind, readyUrl])
 
   if (file.status === 'ready') {
     // Vídeo e áudio já tocam: o clique em "baixar" foi o pedido para ver/ouvir.
     if (kind === 'video') return <video src={file.url} controls autoPlay playsInline />
     if (kind === 'audio') return <audio src={file.url} controls autoPlay />
+    if (kind === 'doc')
+      return (
+        <a ref={save} className="media__download media__saved" href={file.url} download={label}>
+          <span className="media__icon" aria-hidden="true">
+            📄
+          </span>
+          <span className="media__label">{label}</span>
+          <span className="media__hint">Salvar de novo</span>
+        </a>
+      )
     if (kind === 'sticker') return <img src={file.url} alt={label} />
     return (
       <>

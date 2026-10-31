@@ -11,8 +11,10 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, watch, Semaphore};
 use whatsapp_rust::download::{DownloadParams, MediaType};
 use whatsapp_rust::http::HttpRequest;
+use whatsapp_rust::media::{DocumentOptions, ImageOptions, VideoOptions};
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::sync_task::MajorSyncTask;
+use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
 use whatsapp_rust::wacore::store::traits::AppSyncStore;
@@ -20,7 +22,7 @@ use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
-use super::{qr, Sent, UnreadRef, WaEvent, WhatsApp};
+use super::{qr, OutgoingMedia, Sent, UnreadRef, WaEvent, WhatsApp};
 use crate::model::{
   ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageKind, MsgStatus,
 };
@@ -166,6 +168,83 @@ impl WhatsApp for RustWa {
     Ok(())
   }
 
+  async fn send_media(&self, chat_jid: &str, out: OutgoingMedia) -> Result<(Sent, MediaRef)> {
+    let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let media_type = match out.kind {
+      MessageKind::Image => MediaType::Image,
+      MessageKind::Video => MediaType::Video,
+      _ => MediaType::Document,
+    };
+    let up = self
+      .client
+      .upload(out.bytes, media_type, UploadOptions::default())
+      .await
+      .map_err(|e| anyhow!("subindo arquivo: {e}"))?;
+    let media = MediaRef {
+      kind: out.kind,
+      direct_path: up.direct_path.clone(),
+      media_key: Some(up.media_key.to_vec()),
+      file_sha256: up.file_sha256.to_vec(),
+      file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
+      file_length: up.file_length,
+      mimetype: Some(out.mimetype.clone()),
+      width: out.width,
+      height: out.height,
+      seconds: out.seconds,
+      file_name: out.file_name.clone(),
+    };
+    let mut msg = match out.kind {
+      MessageKind::Image => whatsapp_rust::media::image_message(
+        up,
+        ImageOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          ..Default::default()
+        },
+      ),
+      MessageKind::Video => whatsapp_rust::media::video_message(
+        up,
+        VideoOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          duration_seconds: out.seconds,
+          ..Default::default()
+        },
+      ),
+      _ => whatsapp_rust::media::document_message(
+        up,
+        DocumentOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          title: out.file_name.clone(),
+          file_name: out.file_name,
+          ..Default::default()
+        },
+      ),
+    };
+    // Os construtores da lib não preenchem as dimensões; o celular usa para o layout.
+    if let Some(img) = msg.image_message.as_option_mut() {
+      img.width = out.width;
+      img.height = out.height;
+    }
+    if let Some(vid) = msg.video_message.as_option_mut() {
+      vid.width = out.width;
+      vid.height = out.height;
+    }
+    let sent = self
+      .client
+      .send_message(jid, msg)
+      .await
+      .map_err(|e| anyhow!("falha ao enviar: {e}"))?;
+    Ok((
+      Sent {
+        id: sent.message_id,
+        ts: now_secs(),
+      },
+      media,
+    ))
+  }
+
   async fn download_media(&self, media: &MediaRef) -> Result<Vec<u8>> {
     let params = DownloadParams {
       direct_path: media.direct_path.clone(),
@@ -177,6 +256,7 @@ impl WhatsApp for RustWa {
         MessageKind::Sticker => MediaType::Sticker,
         MessageKind::Video => MediaType::Video,
         MessageKind::Audio => MediaType::Audio,
+        MessageKind::Doc => MediaType::Document,
         _ => MediaType::Image,
       },
     };
@@ -910,6 +990,20 @@ fn classify(message: &wa::Message) -> Option<Classified> {
     );
     (MessageKind::Audio, None, x.context_info.as_option())
   } else if let Some(x) = m.document_message.as_option() {
+    media = media_ref(
+      MessageKind::Doc,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (None, None, None),
+    )
+    .map(|r| MediaRef {
+      file_name: x.file_name.clone(),
+      ..r
+    });
     let body = caption.or_else(|| x.file_name.clone());
     (MessageKind::Doc, body, x.context_info.as_option())
   } else if let Some(x) = m.sticker_message.as_option() {
@@ -964,6 +1058,7 @@ fn media_ref(
     width,
     height,
     seconds,
+    file_name: None,
   })
 }
 

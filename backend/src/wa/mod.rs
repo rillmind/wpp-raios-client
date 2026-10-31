@@ -58,6 +58,20 @@ pub enum WaEvent {
   },
 }
 
+/// Arquivo para enviar (imagem, vídeo ou documento).
+#[derive(Debug, Clone)]
+pub struct OutgoingMedia {
+  /// `Image`, `Video` ou `Doc`.
+  pub kind: crate::model::MessageKind,
+  pub bytes: Vec<u8>,
+  pub mimetype: String,
+  pub file_name: Option<String>,
+  pub caption: Option<String>,
+  pub width: Option<u32>,
+  pub height: Option<u32>,
+  pub seconds: Option<u32>,
+}
+
 /// Referência a uma mensagem recebida, para recibo de leitura.
 #[derive(Debug, Clone)]
 pub struct UnreadRef {
@@ -87,6 +101,10 @@ pub trait WhatsApp: Send + Sync {
 
   /// Envia recibos de leitura e marca o chat como lido nos outros aparelhos.
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()>;
+
+  /// Sobe o arquivo (criptografado) para o CDN e envia a mensagem. Devolve também a
+  /// referência para baixar de novo depois.
+  async fn send_media(&self, chat_jid: &str, media: OutgoingMedia) -> Result<(Sent, MediaRef)>;
 
   /// Baixa e descriptografa uma imagem ou figurinha do CDN (só em memória).
   async fn download_media(&self, media: &MediaRef) -> Result<Vec<u8>>;
