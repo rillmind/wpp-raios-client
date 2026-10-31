@@ -4,9 +4,7 @@ interface Props {
   section: Section
   /** Conversas com mensagens não lidas, por seção. */
   unread: Record<Section, number>
-  autoRead: boolean
   onSection: (s: Section) => void
-  onToggleAutoRead: () => void
 }
 
 const ICON: Record<Section, string> = {
@@ -16,8 +14,8 @@ const ICON: Record<Section, string> = {
   archived: 'M3 4h18v4H3zM5 8h14v12H5zM10 12h4',
 }
 
-/** Barra lateral estreita, com as seções e os atalhos do que o app faz. */
-export function Rail({ section, unread, autoRead, onSection, onToggleAutoRead }: Props) {
+/** Barra lateral estreita, com as seções do app. */
+export function Rail({ section, unread, onSection }: Props) {
   const item = (s: Section) => (
     <button
       key={s}
@@ -46,22 +44,6 @@ export function Rail({ section, unread, autoRead, onSection, onToggleAutoRead }:
       <span className="rail__sep" aria-hidden="true" />
       {item('archived')}
 
-      <span className="rail__spacer" />
-
-      <button
-        type="button"
-        className="rail__btn"
-        aria-pressed={autoRead}
-        title={
-          autoRead
-            ? 'Ler ao abrir: ligado (o recibo de leitura é enviado ao abrir a conversa)'
-            : 'Ler ao abrir: desligado (só marca como lida quando você clicar)'
-        }
-        aria-label="Ler ao abrir"
-        onClick={onToggleAutoRead}
-      >
-        <Icon d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
-      </button>
     </nav>
   )
 }

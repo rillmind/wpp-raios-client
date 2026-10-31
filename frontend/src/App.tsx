@@ -10,11 +10,12 @@ import { PairingQr } from './components/PairingQr'
 import { chatSection, SECTION_TITLE, type Section } from './components/format'
 import { Rail } from './components/Rail'
 
-const AUTO_READ_KEY = 'wpp.autoRead'
+// Marcada: abrir a conversa não envia recibo de leitura. Desmarcada (padrão): envia.
+const NO_READ_KEY = 'wpp.noRead'
 
-function loadAutoRead(): boolean {
+function loadNoRead(): boolean {
   try {
-    return localStorage.getItem(AUTO_READ_KEY) === '1'
+    return localStorage.getItem(NO_READ_KEY) === '1'
   } catch {
     return false
   }
@@ -68,7 +69,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [conv, setConv] = useState<ConvState | null>(null)
   const [section, setSection] = useState<Section>('chats')
-  const [autoRead, setAutoRead] = useState(loadAutoRead)
+  const [noRead, setNoRead] = useState(loadNoRead)
+  const autoRead = !noRead
   const selectedRef = useRef(selected)
   useLayoutEffect(() => {
     selectedRef.current = selected
@@ -219,11 +221,11 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   }
 
-  function toggleAutoRead() {
-    const next = !autoRead
-    setAutoRead(next)
+  function toggleNoRead() {
+    const next = !noRead
+    setNoRead(next)
     try {
-      localStorage.setItem(AUTO_READ_KEY, next ? '1' : '0')
+      localStorage.setItem(NO_READ_KEY, next ? '1' : '0')
     } catch {
       // Preferência vale só nesta aba.
     }
@@ -243,13 +245,18 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       <Rail
         section={section}
         unread={unread}
-        autoRead={autoRead}
         onSection={setSection}
-        onToggleAutoRead={toggleAutoRead}
       />
       <aside className="sidebar">
         <header className="topbar">
           <h1 className="topbar__title">{SECTION_TITLE[section]}</h1>
+          <label
+            className="toggle"
+            title="Marcado: abrir a conversa não marca as mensagens como lidas (o contato não vê os tiques azuis)"
+          >
+            <input type="checkbox" checked={noRead} onChange={toggleNoRead} />
+            Não visualizar ao abrir
+          </label>
         </header>
         <p className={`conn conn--${connClass}`} role="status">
           <span className="conn__dot" aria-hidden="true" />

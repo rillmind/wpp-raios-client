@@ -10,7 +10,7 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   contador de não lidas, o estado da conexão no topo e, quando a última mensagem é sua, os tiques
   dela (✓ enviada, ✓✓ entregue, ✓✓ azul lida).
 - Uma barra lateral separa **Conversas**, **Status**, **Canais** e **Arquivadas** (com o número de
-  conversas não lidas, ou um ponto nas outras seções), e liga/desliga o "Ler ao abrir". Status e
+  conversas não lidas, ou um ponto nas outras seções). Status e
   canais são só de leitura: daqui não dá para postar um status nem escrever num canal. Os canais
   aparecem como "Canal", sem nome nem foto (a biblioteca ainda não consegue buscá-los).
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
@@ -26,8 +26,9 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
 - Envia mensagens de texto (Enter envia, Shift+Enter quebra linha). Cada conversa tem o seu
   rascunho: trocar de conversa não leva o texto junto.
-- Marca como lida só quando você clica em "Marcar como lida", porque o contato vê o recibo; a
-  opção "Ler ao abrir" (o olho na barra lateral) faz isso automaticamente. Marcar aqui zera o contador no celular também.
+- Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
+  zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
+  abrir não marca nada: só o botão "Marcar como lida" faz isso.
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
   sincronização inicial). O histórico antigo continua no celular.
 - Áudio, vídeo e documentos aparecem como `[áudio]`, `[vídeo]`, `[documento]`.

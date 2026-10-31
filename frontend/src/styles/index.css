@@ -91,9 +91,6 @@ code {
   background: var(--bg-bar);
   border-right: 1px solid var(--border);
 }
-.rail__spacer {
-  flex: 1;
-}
 .rail__sep {
   width: 60%;
   margin: 0.25rem 0;
@@ -184,6 +181,17 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.toggle input {
+  accent-color: var(--accent);
 }
 .topbar__name,
 .topbar__sub {
