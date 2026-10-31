@@ -8,6 +8,7 @@ const PLACEHOLDER: Record<string, string> = {
   sticker: '[figurinha]',
   // O WhatsApp não entrega o conteúdo a aparelhos conectados.
   view_once: '📷 Visualização única — abra no celular',
+  revoked: '🚫 Mensagem apagada',
   other: '[mensagem]',
 }
 
@@ -91,4 +92,31 @@ export function formatListTime(ts: number | null): string {
   if (ts == null) return ''
   const d = new Date(ts * 1000)
   return d.toDateString() === new Date().toDateString() ? time.format(d) : day.format(d)
+}
+
+/** Código de verificação na mensagem (4 a 8 dígitos, com ou sem hífen/espaço no meio). */
+export function securityCode(text: string | null): string | null {
+  const m = text?.match(/(?<![\d])(\d{3}[- ]?\d{3}|\d{4,8})(?![\d])/)
+  return m ? m[1].replace(/[- ]/g, '') : null
+}
+
+/**
+ * Copia texto. A API de área de transferência só existe em contexto seguro (HTTPS ou
+ * localhost); pelo IP do Tailscale em HTTP cai no método antigo.
+ */
+export async function copyText(text: string): Promise<void> {
+  if (window.isSecureContext && navigator.clipboard) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  const ok = document.execCommand('copy')
+  area.remove()
+  if (!ok) throw new Error('Não foi possível copiar')
 }

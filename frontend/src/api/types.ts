@@ -1,4 +1,13 @@
-export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'view_once' | 'other'
+export type MessageKind =
+  | 'text'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'doc'
+  | 'sticker'
+  | 'view_once'
+  | 'revoked'
+  | 'other'
 export type MsgStatus = 'sent' | 'delivered' | 'read'
 export type ConnState = 'connecting' | 'waiting_qr' | 'connected' | 'disconnected' | 'logged_out'
 
@@ -37,6 +46,10 @@ export interface Message {
   is_read: boolean
   /** Presente quando há imagem/figurinha para baixar. */
   media?: MediaInfo
+  /** Favoritada. */
+  starred: boolean
+  /** Fixada na conversa. */
+  pinned: boolean
 }
 
 export interface MediaInfo {
@@ -60,5 +73,7 @@ export interface MessagesPage {
 export type ServerEvent =
   | { type: 'message.new'; data: Message }
   | { type: 'message.status'; data: { chat_jid: string; ids: string[]; status: MsgStatus } }
+  | { type: 'message.updated'; data: Message }
+  | { type: 'message.deleted'; data: { chat_jid: string; id: string } }
   | { type: 'chat.updated'; data: Chat }
   | { type: 'connection.state'; data: { state: ConnState } }

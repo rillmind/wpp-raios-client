@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError, getToken, setToken } from './api/client'
-import type { Chat, ConnState, ServerEvent } from './api/types'
+import type { Chat, ConnState, Message, ServerEvent } from './api/types'
 import { useEvents } from './api/useEvents'
 import { ChatList } from './components/ChatList'
 import { ChatMenu, type MenuAction } from './components/ChatMenu'
 import type { FileMeta } from './components/Composer'
+import { Confirm, type ConfirmRequest } from './components/Dialog'
+import { ForwardDialog } from './components/ForwardDialog'
+import type { MessagePick } from './components/MessageMenu'
+import { copyText, securityCode } from './components/format'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -74,6 +78,9 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [section, setSection] = useState<Section>('chats')
   const [menu, setMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [replyTo, setReplyTo] = useState<Message | null>(null)
+  const [forwarding, setForwarding] = useState<Message | null>(null)
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [noRead, setNoRead] = useState(loadNoRead)
   const autoRead = !noRead
   const selectedRef = useRef(selected)
@@ -149,6 +156,19 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
           }
           break
         }
+        case 'message.updated': {
+          const m = ev.data
+          setConv((c) =>
+            c && c.jid === m.chat_jid ? { ...c, messages: c.messages.map((x) => (x.id === m.id ? m : x)) } : c,
+          )
+          break
+        }
+        case 'message.deleted': {
+          const { chat_jid, id } = ev.data
+          setConv((c) => (c && c.jid === chat_jid ? { ...c, messages: c.messages.filter((x) => x.id !== id) } : c))
+          setReplyTo((r) => (r?.id === id ? null : r))
+          break
+        }
         case 'message.status': {
           const { chat_jid, ids, status } = ev.data
           setConv((c) =>
@@ -174,6 +194,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     selectedRef.current = null
     setSelected(null)
     setConv(null)
+    setReplyTo(null)
   }, [])
 
   // Esc dentro de uma conversa volta para a tela inicial (inclusive digitando).
@@ -212,6 +233,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   }
 
   function select(jid: string) {
+    if (jid !== selectedRef.current) setReplyTo(null)
     selectedRef.current = jid
     setSelected(jid)
     void openChat(jid)
@@ -238,6 +260,98 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   }
 
+  /** Aplica a versão nova da mensagem (ou a remove) na conversa aberta. */
+  function applyMessage(chatJid: string, id: string, updated: Message | null) {
+    setConv((c) =>
+      c?.jid === chatJid
+        ? {
+            ...c,
+            messages: updated
+              ? c.messages.map((x) => (x.id === id ? updated : x))
+              : c.messages.filter((x) => x.id !== id),
+          }
+        : c,
+    )
+  }
+
+  async function runMessageAction(m: Message, action: string, days?: number) {
+    try {
+      const updated = await api.messageAction(m.chat_jid, m.id, action, days)
+      applyMessage(m.chat_jid, m.id, updated)
+    } catch (e) {
+      setNotice(fail(e))
+    }
+  }
+
+  async function copy(text: string, what: string) {
+    try {
+      await copyText(text)
+      setNotice(`${what} copiado`)
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Não foi possível copiar')
+    }
+  }
+
+  function messagePick(m: Message, pick: MessagePick) {
+    switch (pick) {
+      case 'reply':
+        return setReplyTo(m)
+      case 'copy':
+        return void copy(m.body ?? '', 'Texto')
+      case 'copy_code': {
+        const code = securityCode(m.body)
+        return code ? void copy(code, 'Código') : undefined
+      }
+      case 'forward':
+        return setForwarding(m)
+      case 'pin1':
+        return void runMessageAction(m, 'pin', 1)
+      case 'pin7':
+        return void runMessageAction(m, 'pin', 7)
+      case 'pin30':
+        return void runMessageAction(m, 'pin', 30)
+      case 'unpin':
+      case 'star':
+      case 'unstar':
+        return void runMessageAction(m, pick)
+      case 'delete_me':
+        return setConfirm({
+          title: 'Excluir para mim?',
+          text: 'A mensagem some daqui e do seu celular. Os outros continuam vendo.',
+          confirmLabel: 'Excluir para mim',
+          onConfirm: () => void runMessageAction(m, 'delete_me'),
+        })
+      case 'delete_all':
+        return setConfirm({
+          title: 'Excluir para todos?',
+          text: 'A mensagem é apagada para todos na conversa. Não dá para desfazer.',
+          confirmLabel: 'Excluir para todos',
+          onConfirm: () => void runMessageAction(m, 'delete_all'),
+        })
+      case 'report':
+        return setConfirm({
+          title: 'Denunciar ao WhatsApp?',
+          text: 'Esta mensagem é enviada ao WhatsApp para análise. Quem mandou não é avisado.',
+          confirmLabel: 'Denunciar',
+          onConfirm: () =>
+            void api.messageAction(m.chat_jid, m.id, 'report').then(
+              () => setNotice('Mensagem denunciada'),
+              (e) => setNotice(fail(e)),
+            ),
+        })
+    }
+  }
+
+  async function forwardTo(to: string[]) {
+    if (!forwarding) return
+    try {
+      await api.forward(forwarding.chat_jid, forwarding.id, to)
+      setNotice(to.length > 1 ? `Encaminhada para ${to.length} conversas` : 'Encaminhada')
+    } catch (e) {
+      throw new Error(fail(e))
+    }
+  }
+
   async function sendFile(file: File, caption: string | null, meta: FileMeta) {
     if (!selected) return
     const jid = selected
@@ -255,7 +369,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     if (!selected) return
     const jid = selected
     try {
-      const m = await api.send(jid, text)
+      const m = await api.send(jid, text, replyTo?.chat_jid === jid ? replyTo.id : null)
+      setReplyTo(null)
       setConv((c) =>
         c?.jid === jid && !c.messages.some((x) => x.id === m.id) ? { ...c, messages: [...c.messages, m] } : c,
       )
@@ -320,6 +435,10 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             onPick={(pick) => void pickAction(menu.chat, pick)}
           />
         )}
+        {forwarding && (
+          <ForwardDialog chats={chats} onSend={forwardTo} onClose={() => setForwarding(null)} />
+        )}
+        {confirm && <Confirm req={confirm} onClose={() => setConfirm(null)} />}
         {notice && (
           <p className="notice" role="alert">
             {notice}
@@ -338,6 +457,9 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             onMarkRead={() => markRead(conv.jid)}
             onSend={send}
             onSendFile={sendFile}
+            replyTo={replyTo?.chat_jid === conv.jid ? replyTo : null}
+            onCancelReply={() => setReplyTo(null)}
+            onMessagePick={messagePick}
           />
         ) : conn === 'waiting_qr' ? (
           <MainPairing />

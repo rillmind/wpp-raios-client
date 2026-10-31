@@ -86,10 +86,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(hours ? { action, hours } : { action }),
     }),
-  send: (jid: string, text: string) =>
+  send: (jid: string, text: string, replyTo?: string | null) =>
     request<Message>(`/api/chats/${enc(jid)}/send`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(replyTo ? { text, reply_to: replyTo } : { text }),
+    }),
+  /** Estrela, fixar (`days`: 1, 7, 30), apagar para mim/todos ou denunciar. */
+  messageAction: (jid: string, id: string, action: string, days?: number) =>
+    request<Message | null>(`/api/chats/${enc(jid)}/messages/${enc(id)}/action`, {
+      method: 'POST',
+      body: JSON.stringify(days ? { action, days } : { action }),
+    }),
+  forward: (jid: string, id: string, to: string[]) =>
+    request<Message[]>(`/api/chats/${enc(jid)}/messages/${enc(id)}/forward`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
     }),
   avatarPath: (jid: string) => `/api/chats/${enc(jid)}/avatar`,
   mediaPath: (jid: string, id: string) => `/api/chats/${enc(jid)}/messages/${enc(id)}/media`,

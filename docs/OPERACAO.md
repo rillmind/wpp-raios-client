@@ -41,9 +41,11 @@ Tudo em `127.0.0.1`. As rotas exigem `Authorization: Bearer <token>`; só `/api/
 | `GET /api/chats/{jid}/avatar` | foto de perfil, buscada na hora; `204` se não houver |
 | `POST /api/chats/{jid}/read` | recibos de leitura + marca lido no celular |
 | `POST /api/chats/{jid}/action` | `{ "action": "archive" \| "unarchive" \| "pin" \| "unpin" \| "mute" \| "unmute" \| "unread", "hours"? }` (`hours` só em `mute`; sem ele, para sempre) |
-| `POST /api/chats/{jid}/send` | `{ "text": "..." }`, uma mensagem por requisição |
+| `POST /api/chats/{jid}/send` | `{ "text": "...", "reply_to"? }`, uma mensagem por requisição; `reply_to` cita outra mensagem da conversa |
+| `POST /api/chats/{jid}/messages/{id}/action` | `{ "action": "star" \| "unstar" \| "pin" \| "unpin" \| "delete_me" \| "delete_all" \| "report", "days"? }` (`days` 1, 7 ou 30 em `pin`) |
+| `POST /api/chats/{jid}/messages/{id}/forward` | `{ "to": ["jid", …] }`, até 5 conversas |
 | `POST /api/chats/{jid}/send-media?name=&caption=&width=&height=&seconds=` | corpo = o arquivo, `Content-Type` = o tipo; até 100 MB. JPEG/PNG vão como imagem, MP4 como vídeo, o resto como documento |
-| `GET /api/events` | SSE: `message.new`, `message.status`, `chat.updated`, `connection.state` (e `resync`) |
+| `GET /api/events` | SSE: `message.new`, `message.status`, `message.updated`, `message.deleted`, `chat.updated`, `connection.state` (e `resync`) |
 
 Logs em nível `info` não têm conteúdo de mensagens.
 

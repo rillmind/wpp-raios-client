@@ -1,8 +1,9 @@
-import { Fragment, useLayoutEffect, useRef } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import type { Chat, Message } from '../api/types'
 import { Avatar } from './Avatar'
 import { Composer, type FileMeta } from './Composer'
 import { MediaView } from './MediaView'
+import { MessageMenu, type MessagePick } from './MessageMenu'
 import { chatName, formatPhone, formatTime, isReadOnly, messageText, senderName } from './format'
 
 export interface ConvState {
@@ -23,6 +24,23 @@ interface Props {
   onMarkRead: () => Promise<void>
   onSend: (text: string) => Promise<void>
   onSendFile: (file: File, caption: string | null, meta: FileMeta) => Promise<void>
+  /** Mensagem sendo respondida (aparece acima da caixa). */
+  replyTo: Message | null
+  onCancelReply: () => void
+  onMessagePick: (m: Message, pick: MessagePick) => void
+}
+
+/** Rola até a mensagem e pisca para achar. */
+function jumpTo(id: string) {
+  const el = document.getElementById(`msg-${id}`)
+  if (!el) return
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  el.classList.add('bubble--flash')
+  setTimeout(() => el.classList.remove('bubble--flash'), 1200)
+}
+
+function quoteText(m: Message): string {
+  return m.kind === 'text' ? (m.body ?? '') : messageText(m)
 }
 
 const STATUS_ICON: Record<string, string> = { sent: '✓', delivered: '✓✓', read: '✓✓' }
@@ -36,7 +54,11 @@ export function Conversation({
   onMarkRead,
   onSend,
   onSendFile,
+  replyTo,
+  onCancelReply,
+  onMessagePick,
 }: Props) {
+  const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const positioned = useRef<string | null>(null)
   const restore = useRef<number | null>(null)
@@ -73,6 +95,9 @@ export function Conversation({
   const showSender = isGroup || conv.jid === 'status@broadcast'
   const readOnly = isReadOnly(conv.jid)
   const unread = chat?.unread_count ?? 0
+  const byId = new Map(conv.messages.map((m) => [m.id, m]))
+  const pinned = conv.messages.filter((m) => m.pinned).at(-1)
+  const who = (m: Message) => (m.from_me ? 'Você' : showSender ? senderName(m) : chat ? chatName(chat) : '')
 
   return (
     <section className="conversation" aria-label="Conversa">
@@ -91,6 +116,12 @@ export function Conversation({
           </button>
         )}
       </header>
+      {pinned && (
+        <button type="button" className="pinned-bar" onClick={() => jumpTo(pinned.id)}>
+          <span aria-hidden="true">📌</span>
+          <span className="pinned-bar__text">{quoteText(pinned)}</span>
+        </button>
+      )}
 
       <div
         className="messages"
@@ -119,13 +150,30 @@ export function Conversation({
               </div>
             )}
             <div
+              id={`msg-${m.id}`}
               className={[
                 'bubble',
                 m.from_me ? 'bubble--out' : 'bubble--in',
                 m.media && m.kind === 'sticker' ? 'bubble--sticker' : '',
               ].join(' ')}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setMenu({ m, x: e.clientX, y: e.clientY })
+              }}
             >
               {showSender && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
+              {m.quoted_id && (
+                <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
+                  {byId.has(m.quoted_id) ? (
+                    <>
+                      <span className="quote__who">{who(byId.get(m.quoted_id)!)}</span>
+                      <span className="quote__text">{quoteText(byId.get(m.quoted_id)!)}</span>
+                    </>
+                  ) : (
+                    <span className="quote__text">Mensagem citada</span>
+                  )}
+                </button>
+              )}
               {m.media ? (
                 <>
                   <MediaView chatJid={conv.jid} message={m} />
@@ -138,6 +186,7 @@ export function Conversation({
                 </span>
               )}
               <span className="bubble__meta">
+                {m.starred && <span aria-label="Favoritada">★</span>}
                 {formatTime(m.ts)}
                 {m.from_me && m.status && (
                   <span className={m.status === 'read' ? 'tick tick--read' : 'tick'} aria-label={m.status}>
@@ -153,7 +202,24 @@ export function Conversation({
       {readOnly ? (
         <p className="readonly-note">Status e canais são só de leitura aqui.</p>
       ) : (
-        <Composer key={conv.jid} disabled={!connected} onSend={onSend} onSendFile={onSendFile} />
+        <Composer
+          key={conv.jid}
+          disabled={!connected}
+          onSend={onSend}
+          onSendFile={onSendFile}
+          reply={replyTo ? { who: who(replyTo), text: quoteText(replyTo) } : null}
+          onCancelReply={onCancelReply}
+        />
+      )}
+      {menu && (
+        <MessageMenu
+          message={menu.m}
+          chatJid={conv.jid}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onPick={(pick) => onMessagePick(menu.m, pick)}
+        />
       )}
     </section>
   )

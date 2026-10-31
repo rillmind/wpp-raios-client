@@ -40,6 +40,13 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   desarquivar, fixar ou desafixar, silenciar (8 horas, 1 semana ou para sempre) ou reativar o som
   e marcar como lida ou não lida. Tudo vale também no celular. Apagar ou limpar conversa não
   existe aqui, de propósito.
+- Botão direito numa mensagem (toque longo no Android) abre: responder (citando a mensagem),
+  copiar, copiar código (quando a mensagem tem um código de verificação), encaminhar (para até 5
+  conversas, sem baixar e reenviar o arquivo), fixar por 24 horas, 7 ou 30 dias, favoritar,
+  excluir para mim, excluir para todos (suas mensagens, até cerca de 2 dias e meio) e denunciar ao
+  WhatsApp (as recebidas). Excluir e denunciar pedem confirmação. Tudo vale também no celular. A
+  mensagem fixada aparece no topo da conversa e as favoritadas ganham uma estrela. Mensagens que a
+  pessoa apaga para todos viram "Mensagem apagada" aqui também.
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
   abrir não marca nada: só o botão "Marcar como lida" faz isso.

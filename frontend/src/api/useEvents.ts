@@ -4,7 +4,14 @@ import type { ServerEvent } from './types'
 
 export type StreamState = 'open' | 'connecting' | 'closed'
 
-const NAMES = ['message.new', 'message.status', 'chat.updated', 'connection.state'] as const
+const NAMES = [
+  'message.new',
+  'message.status',
+  'message.updated',
+  'message.deleted',
+  'chat.updated',
+  'connection.state',
+] as const
 
 /**
  * Assina `/api/events`. O EventSource reconecta sozinho; `onResync` é chamado

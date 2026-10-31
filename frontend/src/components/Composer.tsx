@@ -15,6 +15,9 @@ interface Props {
   onSend: (text: string) => Promise<void>
   /** Um arquivo por vez; `caption` só no primeiro de um lote. */
   onSendFile: (file: File, caption: string | null, meta: FileMeta) => Promise<void>
+  /** Respondendo a esta mensagem (só texto vai como resposta). */
+  reply: { who: string; text: string } | null
+  onCancelReply: () => void
 }
 
 interface Pending {
@@ -62,7 +65,7 @@ async function probe(file: File): Promise<FileMeta> {
 
 let nextId = 1
 
-export function Composer({ disabled, onSend, onSendFile }: Props) {
+export function Composer({ disabled, onSend, onSendFile, reply, onCancelReply }: Props) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Pending[]>([])
   const [sending, setSending] = useState(false)
@@ -79,6 +82,12 @@ export function Composer({ disabled, onSend, onSendFile }: Props) {
   useEffect(() => {
     if (!disabled && !isTouch()) input.current?.focus()
   }, [disabled])
+
+  // Ao escolher "Responder", volta o foco para a caixa.
+  const replyKey = reply ? `${reply.who}\n${reply.text}` : null
+  useEffect(() => {
+    if (replyKey) input.current?.focus()
+  }, [replyKey])
 
   // Solta as miniaturas da memória ao sair da conversa.
   useEffect(() => () => filesRef.current.forEach((p) => p.preview && URL.revokeObjectURL(p.preview)), [])
@@ -163,6 +172,23 @@ export function Composer({ disabled, onSend, onSendFile }: Props) {
         <p className="composer__error" role="alert">
           {error}
         </p>
+      )}
+      {reply && (
+        <div className="reply-bar">
+          <span className="reply-bar__body">
+            <span className="quote__who">{reply.who}</span>
+            <span className="quote__text">{reply.text}</span>
+          </span>
+          <button
+            type="button"
+            className="attachment__remove"
+            aria-label="Cancelar resposta"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={onCancelReply}
+          >
+            ×
+          </button>
+        </div>
       )}
       {files.length > 0 && (
         <ul className="attachments" aria-label="Arquivos para enviar">
