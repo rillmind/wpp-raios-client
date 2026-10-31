@@ -8,7 +8,7 @@ import type { FileMeta } from './components/Composer'
 import { Confirm, type ConfirmRequest } from './components/Dialog'
 import { ForwardDialog } from './components/ForwardDialog'
 import type { MessagePick } from './components/MessageMenu'
-import { copyText, securityCode } from './components/format'
+import { copyText, securityCode, shuffledPalette } from './components/format'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -115,6 +115,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   const openChat = useCallback(
     async (jid: string) => {
+      const palette = shuffledPalette()
       setConv({
         jid,
         messages: [],
@@ -123,6 +124,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
         loading: true,
         error: null,
         pending: false,
+        palette,
       })
       try {
         // Abre com o que está guardado e visível: na primeira vez, só as não lidas.
@@ -136,6 +138,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
           loading: false,
           error: null,
           pending: false,
+          palette,
         })
       } catch (e) {
         const error = fail(e)

@@ -16,7 +16,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   canais são só de leitura: daqui não dá para postar um status nem escrever num canal.
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
-  mensagem.
+  mensagem, cada pessoa numa cor (as 14 cores de destaque do Catppuccin, sorteadas ao abrir a
+  conversa; uma cor só se repete com mais de 14 pessoas).
 - Mostra as fotos de perfil, que carregam sozinhas.
 - Imagens, figurinhas, vídeos, áudios e documentos aparecem como um botão com o tamanho do
   arquivo (e a duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem

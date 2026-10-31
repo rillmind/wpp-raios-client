@@ -4,7 +4,15 @@ import { Avatar } from './Avatar'
 import { Composer, type FileMeta } from './Composer'
 import { MediaView } from './MediaView'
 import { MessageMenu, type MessagePick } from './MessageMenu'
-import { chatName, formatPhone, formatTime, isReadOnly, messageText, senderName } from './format'
+import {
+  chatName,
+  formatPhone,
+  formatTime,
+  isReadOnly,
+  messageText,
+  SENDER_COLORS,
+  senderName,
+} from './format'
 
 export interface ConvState {
   jid: string
@@ -15,7 +23,10 @@ export interface ConvState {
   error: string | null
   /** Esperando o celular mandar mensagens antigas. */
   pending: boolean
+  /** Ordem das cores de nome nesta abertura da conversa (sorteada ao abrir). */
+  palette: number[]
 }
+
 
 interface Props {
   chat: Chat | undefined
@@ -64,6 +75,30 @@ export function Conversation({
   onMessagePick,
 }: Props) {
   const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null)
+
+  // Cor de cada remetente, fixa enquanto a conversa está aberta. Quem aparece primeiro
+  // (das mais novas para as mais antigas) pega a próxima cor da ordem sorteada; uma cor
+  // só se repete quando há mais pessoas do que cores.
+  const [colors, setColors] = useState<{ jid: string; bySender: Record<string, number> }>({
+    jid: conv.jid,
+    bySender: {},
+  })
+  const assigned = colors.jid === conv.jid ? colors.bySender : {}
+  const missing: string[] = []
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    const s = conv.messages[i].sender_jid
+    if (!conv.messages[i].from_me && s && !(s in assigned) && !missing.includes(s)) missing.push(s)
+  }
+  if (colors.jid !== conv.jid || missing.length > 0) {
+    const next = { ...assigned }
+    for (const s of missing) next[s] = Object.keys(next).length
+    setColors({ jid: conv.jid, bySender: next })
+  }
+  const senderColor = (s: string | null) => {
+    const n = s != null ? assigned[s] : undefined
+    if (n == null || conv.palette.length === 0) return undefined
+    return `var(--ctp-${SENDER_COLORS[conv.palette[n % conv.palette.length]]})`
+  }
   const scroller = useRef<HTMLDivElement>(null)
   const positioned = useRef<string | null>(null)
   const restore = useRef<number | null>(null)
@@ -192,7 +227,11 @@ export function Conversation({
                   setMenu({ m, x: e.clientX, y: e.clientY })
                 }}
               >
-                {showSender && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
+                {showSender && !m.from_me && (
+                <span className="bubble__sender" style={{ color: senderColor(m.sender_jid) }}>
+                  {senderName(m)}
+                </span>
+              )}
                 {m.quoted_id && (
                   <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
                     {byId.has(m.quoted_id) ? (
