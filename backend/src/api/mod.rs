@@ -53,6 +53,8 @@ pub fn router(
     .route("/api/chats/{jid}/messages", get(handlers::messages))
     .route("/api/chats/{jid}/read", post(handlers::mark_read))
     .route("/api/chats/{jid}/send", post(handlers::send))
+    .route("/api/chats/{jid}/avatar", get(handlers::avatar))
+    .route("/api/chats/{jid}/messages/{id}/media", get(handlers::media))
     .route("/api/events", get(handlers::events))
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
     // Fora da autenticação: só diz que o processo responde (healthcheck do container).

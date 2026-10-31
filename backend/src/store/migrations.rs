@@ -56,6 +56,28 @@ pub(super) const MIGRATIONS: &[&str] = &[
    DELETE FROM chats
      WHERE jid LIKE '%@s.whatsapp.net' AND last_msg_ts IS NULL
        AND NOT EXISTS (SELECT 1 FROM messages WHERE chat_jid = chats.jid);",
+  // 3: referência para baixar imagens e figurinhas na hora (o arquivo nunca é guardado).
+  "CREATE TABLE media (
+     chat_jid        TEXT NOT NULL,
+     msg_id          TEXT NOT NULL,
+     kind            TEXT NOT NULL,
+     direct_path     TEXT NOT NULL,
+     media_key       BLOB,
+     file_sha256     BLOB NOT NULL,
+     file_enc_sha256 BLOB,
+     file_length     INTEGER NOT NULL,
+     mimetype        TEXT,
+     width           INTEGER,
+     height          INTEGER,
+     PRIMARY KEY (chat_jid, msg_id)
+   );",
+  // 4: os nomes por telefone migrados na versão 2 eram, quase todos, apelidos (o histórico
+  // os gravou por cima dos nomes da agenda). Voltam a ser apelido, e a agenda é pedida de
+  // novo ao WhatsApp uma vez (tarefa pendente `contacts_resync`).
+  "UPDATE contacts SET push_name = COALESCE(push_name, contact_name), contact_name = NULL
+     WHERE jid LIKE '%@s.whatsapp.net';
+   CREATE TABLE pending_tasks (name TEXT PRIMARY KEY);
+   INSERT INTO pending_tasks (name) VALUES ('contacts_resync');",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

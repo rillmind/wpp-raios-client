@@ -29,6 +29,16 @@ export interface Message {
   quoted_id: string | null
   status: MsgStatus | null
   is_read: boolean
+  /** Presente quando há imagem/figurinha para baixar. */
+  media?: MediaInfo
+}
+
+export interface MediaInfo {
+  /** Tamanho do arquivo em bytes. */
+  size: number
+  mimetype: string | null
+  width: number | null
+  height: number | null
 }
 
 export interface MessagesPage {

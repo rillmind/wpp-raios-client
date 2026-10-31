@@ -66,6 +66,44 @@ pub async fn backfill_lids(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender
   tracing::info!(lids = lids.len(), found, "telefones dos @lid conferidos");
 }
 
+/// Tarefa única: pede a agenda de novo assim que conectar (ver migração 4).
+pub async fn resync_contacts_once(store: Store, wa: Arc<dyn WhatsApp>) {
+  const TASK: &str = "contacts_resync";
+  match store.run(|db| db.has_pending_task(TASK)).await {
+    Ok(true) => {}
+    Ok(false) => return,
+    Err(e) => {
+      tracing::error!(error = %e, "falha ao ler tarefas pendentes");
+      return;
+    }
+  }
+  while wa.state() != crate::model::ConnState::Connected {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+  }
+  tracing::info!("pedindo a agenda de contatos de novo ao WhatsApp");
+  if let Err(e) = wa.resync_contacts().await {
+    tracing::warn!(error = %e, "falha ao pedir a agenda; tenta de novo no próximo início");
+    return;
+  }
+  // Os contatos chegam como eventos pela fila do ingest; dá um tempo para gravarem.
+  tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+  let named = store
+    .run(|db| {
+      let n = db.count_agenda_names()?;
+      // Sem nenhum nome, algo falhou: tenta de novo no próximo início.
+      if n > 0 {
+        db.finish_pending_task(TASK)?;
+      }
+      Ok(n)
+    })
+    .await;
+  match named {
+    Ok(0) => tracing::warn!("a agenda não trouxe nomes; tenta de novo no próximo início"),
+    Ok(n) => tracing::info!(contatos_com_nome_da_agenda = n, "agenda recebida"),
+    Err(e) => tracing::error!(error = %e, "falha ao concluir a tarefa da agenda"),
+  }
+}
+
 async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent) {
   match apply(store, ev).await {
     Ok(out) => {
@@ -82,9 +120,12 @@ async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent
 pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
   let out = match ev {
     WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
-    WaEvent::Message(mut msg) => {
+    WaEvent::Message { mut msg, media } => {
       store
         .run(move |db| {
+          if let Some(media) = &media {
+            db.insert_media(&msg.chat_jid, &msg.id, media)?;
+          }
           if !db.insert_message(&msg)? {
             return Ok(vec![]);
           }
@@ -104,9 +145,13 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       meta,
       last_ts,
       messages,
+      media,
     } => {
       store
         .run(move |db| {
+          for (id, m) in &media {
+            db.insert_media(&meta.jid, id, m)?;
+          }
           db.import_history_chat(&meta, last_ts, &messages)?;
           chat_updated(db, &meta.jid)
         })

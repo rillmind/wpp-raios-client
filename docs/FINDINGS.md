@@ -103,6 +103,13 @@ Várias fontes, todas tratadas como `WaEvent::ChatMeta` (só sobrescrevem quando
   `ContactAction.lidJid`/`pnJid`, `Conversation.lidJid`/`pnJid` e, para o que já estava gravado,
   `Client::get_lid_pn_entry` (tabela `lid_pn_mapping` da sessão, consultada sem rede). Não houve
   chats duplicados: as entradas por telefone eram só nomes, sem mensagens.
+- **Agenda x apelido:** no pareamento, os apelidos do histórico (`PUSH_NAME`) chegaram depois dos
+  nomes da agenda e, quando os dois iam para o mesmo campo, ficavam por cima. Para recuperar a
+  agenda: `AppSyncStore::set_version("critical_unblock_low", HashState::default())` e
+  `Client::process_sync_task(AppStateSync { CriticalUnblockLow, full_sync: true })`. Só pedir o
+  snapshot não basta: a lib descarta snapshot com versão `<=` à guardada ("Skipping stale
+  snapshot"); com a versão em 0 ela o aplica do zero (limpa e regrava os MACs, depois a versão),
+  e cada contato salvo chega como `Event::ContactUpdate` (317 no pareamento real).
 - **Desligamento:** `BotHandle::shutdown()` grava o estado pendente da sessão antes de fechar.
   Depois do desligamento intencional a lib ainda loga "reconnecting immediately", mas o loop termina.
 - A lib também tem `shutdown_signal()` (SIGINT + SIGTERM), usado no `main`.
