@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useRef } from 'react'
 import type { Chat, Message } from '../api/types'
 import { Composer } from './Composer'
-import { chatName, formatTime, messageText, shortJid } from './format'
+import { chatName, formatPhone, formatTime, messageText, senderName } from './format'
 
 export interface ConvState {
   jid: string
@@ -65,7 +65,10 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
         <button type="button" className="btn btn--ghost topbar__back" onClick={onBack} aria-label="Voltar">
           ←
         </button>
-        <h2 className="topbar__title">{chat ? chatName(chat) : shortJid(conv.jid)}</h2>
+        <div className="topbar__title">
+          <h2 className="topbar__name">{chat ? chatName(chat) : 'Conversa'}</h2>
+          {chat?.name && chat.phone && <p className="topbar__sub">{formatPhone(chat.phone)}</p>}
+        </div>
         {unread > 0 && (
           <button type="button" className="btn" onClick={() => void onMarkRead()} disabled={!connected}>
             Marcar como lida
@@ -100,7 +103,7 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
               </div>
             )}
             <div className={m.from_me ? 'bubble bubble--out' : 'bubble bubble--in'}>
-              {isGroup && !m.from_me && <span className="bubble__sender">{shortJid(m.sender_jid)}</span>}
+              {isGroup && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
               <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
                 {messageText(m)}
               </span>

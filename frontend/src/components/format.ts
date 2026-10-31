@@ -16,11 +16,23 @@ export function messageText(m: Message): string {
 }
 
 export function chatName(c: Chat): string {
-  return c.name ?? c.jid.split('@')[0]
+  if (c.name) return c.name
+  if (c.phone) return formatPhone(c.phone)
+  if (c.jid.endsWith('@broadcast')) return 'Status'
+  if (c.jid.endsWith('@newsletter')) return 'Canal'
+  // Sem nome nem telefone, o id interno (@lid) não diz nada a ninguém.
+  return c.is_group ? 'Grupo sem nome' : 'Contato sem nome'
 }
 
-export function shortJid(jid: string | null): string {
-  return jid ? jid.split('@')[0].split(':')[0] : ''
+/** Telefone legível; números do Brasil como "+55 11 98888-7777". */
+export function formatPhone(digits: string): string {
+  const br = /^55(\d{2})(\d{4,5})(\d{4})$/.exec(digits)
+  return br ? `+55 ${br[1]} ${br[2]}-${br[3]}` : `+${digits}`
+}
+
+export function senderName(m: Message): string {
+  if (!m.sender_name) return 'Desconhecido'
+  return m.sender_name.startsWith('+') ? formatPhone(m.sender_name.slice(1)) : m.sender_name
 }
 
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
