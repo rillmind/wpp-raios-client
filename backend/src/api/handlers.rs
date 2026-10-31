@@ -85,8 +85,6 @@ pub async fn list_chats(
 pub struct MessagesQuery {
   limit: Option<u32>,
   before: Option<i64>,
-  /// Só as não lidas (e o que veio depois delas): é como a conversa abre.
-  unread_only: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -111,21 +109,6 @@ pub async fn messages(
         return Ok(None);
       }
       let first_unread = db.first_unread(&jid)?;
-      if q.unread_only == Some(true) {
-        // As anteriores ficam para o "carregar mensagens" (do banco ou do celular).
-        let messages = match &first_unread {
-          Some(fu) => {
-            let n = db.count_since(&jid, fu.ts)?.min(MAX_UNREAD_PAGE);
-            db.last_messages(&jid, n, None)?
-          }
-          None => vec![],
-        };
-        return Ok(Some(MessagesResponse {
-          messages,
-          first_unread_id: first_unread.map(|m| m.id),
-          has_more: true,
-        }));
-      }
       // Na primeira página, garante que todas as não lidas venham.
       let mut page = limit;
       if q.before.is_none() {
@@ -134,10 +117,13 @@ pub async fn messages(
         }
       }
       let mut messages = db.last_messages(&jid, page + 1, q.before)?;
-      let has_more = messages.len() > page as usize;
-      if has_more {
+      let more_here = messages.len() > page as usize;
+      if more_here {
         messages.remove(0);
       }
+      // Sem mais aqui, o "carregar mensagens" ainda pode pedir ao celular, desde que haja
+      // alguma mensagem guardada (mesmo escondida) para servir de ponto de partida.
+      let has_more = more_here || db.oldest_message(&jid)?.is_some();
       Ok(Some(MessagesResponse {
         messages,
         first_unread_id: first_unread.map(|m| m.id),
@@ -182,6 +168,8 @@ pub async fn load_older(
       if db.get_chat(&j)?.is_none() {
         return Ok(None);
       }
+      // O primeiro "carregar" mostra (de vez) a âncora guardada da sincronização.
+      db.reveal_hidden(&j)?;
       Ok(Some((
         db.last_messages(&j, count, body.before)?,
         db.oldest_message(&j)?,

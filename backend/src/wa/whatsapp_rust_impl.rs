@@ -1167,6 +1167,7 @@ fn convert_conversation(conv: &wa::Conversation, on_demand: bool) -> Option<WaEv
       messages,
       media,
       on_demand: true,
+      hidden_id: None,
     });
   }
 
@@ -1182,9 +1183,15 @@ fn convert_conversation(conv: &wa::Conversation, on_demand: bool) -> Option<WaEv
   }
   let mut media = Vec::new();
   let mut messages = Vec::new();
+  // A mais nova fica de âncora; se já foi lida, guardada sem aparecer (a conversa abre
+  // vazia na primeira vez, e ela surge no primeiro "carregar mensagens").
+  let mut hidden_id = None;
   for (i, (m, r)) in converted.into_iter().enumerate() {
     if m.is_read && i > 0 {
       continue;
+    }
+    if m.is_read {
+      hidden_id = Some(m.id.clone());
     }
     if let Some(r) = r {
       media.push((m.id.clone(), r));
@@ -1221,6 +1228,7 @@ fn convert_conversation(conv: &wa::Conversation, on_demand: bool) -> Option<WaEv
     messages,
     media,
     on_demand: false,
+    hidden_id,
   })
 }
 

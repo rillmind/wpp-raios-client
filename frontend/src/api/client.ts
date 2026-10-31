@@ -75,12 +75,10 @@ const enc = encodeURIComponent
 
 export const api = {
   chats: () => request<Chat[]>('/api/chats?limit=500'),
-  /** `unreadOnly`: como a conversa abre (só as não lidas). */
-  messages: (jid: string, opts: { before?: number; limit?: number; unreadOnly?: boolean } = {}) => {
+  messages: (jid: string, opts: { before?: number; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (opts.before != null) q.set('before', String(opts.before))
     if (opts.limit) q.set('limit', String(opts.limit))
-    if (opts.unreadOnly) q.set('unread_only', 'true')
     return request<MessagesPage>(`/api/chats/${enc(jid)}/messages${q.size ? `?${q}` : ''}`)
   },
   /** "Carregar mensagens": as guardadas e, se faltar, pede as anteriores ao celular. */

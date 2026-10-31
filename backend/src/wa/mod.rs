@@ -56,6 +56,8 @@ pub enum WaEvent {
     media: Vec<(String, MediaRef)>,
     /// Resposta a um pedido de mensagens antigas (não muda contador nem chat).
     on_demand: bool,
+    /// Guardada sem aparecer até o primeiro "carregar mensagens" (a âncora).
+    hidden_id: Option<String>,
   },
   /// Recibo de mensagem enviada por nós.
   Status {

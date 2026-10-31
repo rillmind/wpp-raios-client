@@ -52,11 +52,11 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
   abrir não marca nada: só o botão "Marcar como lida" faz isso.
-- Guarda o que chega a partir do pareamento. Da sincronização inicial, guarda só as mensagens
-  não lidas (e a última de cada conversa, como ponto de partida). A conversa abre só com as não
-  lidas; sem nenhuma, abre vazia com o botão "Carregar mensagens", que mostra as 20 anteriores,
-  pedindo ao celular o que não estiver guardado (o celular precisa estar ligado e com internet;
-  chegam em alguns segundos). Cada clique traz mais 20.
+- Guarda o que chega a partir do pareamento, e tudo o que já foi carregado fica guardado. Na
+  primeira vez, cada conversa mostra só as mensagens não lidas; sem nenhuma, abre vazia com o
+  botão "Carregar mensagens". O botão mostra as 20 anteriores, pedindo ao celular o que não
+  estiver guardado (o celular precisa estar ligado e com internet; chegam em alguns segundos), e
+  cada clique traz mais 20. O que foi carregado continua aparecendo nas próximas vezes.
 - Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
   entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 

@@ -112,16 +112,25 @@ impl Db {
   /// Grava um chat da sincronização inicial com suas mensagens recentes.
   ///
   /// O contador vem do WhatsApp (`meta.unread_count`), então as inserções não o incrementam.
+  ///
+  /// `hidden_id`: mensagem que fica guardada sem aparecer (só se ainda não existia; uma
+  /// que já aparece nunca é escondida).
   pub fn import_history_chat(
     &mut self,
     meta: &ChatMeta,
     last_ts: Option<i64>,
     msgs: &[Message],
+    hidden_id: Option<&str>,
   ) -> Result<()> {
     let tx = self.conn.transaction()?;
     upsert_chat(&tx, meta)?;
     for m in msgs {
-      insert_row(&tx, m)?;
+      if insert_row(&tx, m)? && hidden_id == Some(m.id.as_str()) {
+        tx.execute(
+          "UPDATE messages SET hidden = 1 WHERE chat_jid = ?1 AND id = ?2",
+          params![m.chat_jid, m.id],
+        )?;
+      }
     }
     let newest = msgs.iter().max_by_key(|m| m.ts);
     if let Some(ts) = newest.map(|m| m.ts).or(last_ts) {
@@ -251,6 +260,14 @@ impl Db {
       changed.push(id.clone());
     }
     Ok(changed)
+  }
+
+  /// Mostra as mensagens guardadas e escondidas da conversa (de vez). Devolve quantas.
+  pub fn reveal_hidden(&self, chat_jid: &str) -> Result<usize> {
+    Ok(self.conn.execute(
+      "UPDATE messages SET hidden = 0 WHERE chat_jid = ?1 AND hidden = 1",
+      params![chat_jid],
+    )?)
   }
 
   /// Mensagem mais antiga guardada da conversa (ponto de partida para pedir as anteriores).
@@ -574,7 +591,7 @@ impl Db {
     before: Option<i64>,
   ) -> Result<Vec<Message>> {
     let mut stmt = self.conn.prepare(&format!(
-      "{} WHERE m.chat_jid = ?1 AND (?2 IS NULL OR m.ts < ?2)
+      "{} WHERE m.chat_jid = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.ts < ?2)
        ORDER BY m.ts DESC, m.rowid DESC
        LIMIT ?3",
       msg_select()
@@ -607,7 +624,7 @@ impl Db {
   /// Quantas mensagens existem a partir de `ts` (inclusive), para cobrir todas as não lidas.
   pub fn count_since(&self, chat_jid: &str, ts: i64) -> Result<u32> {
     Ok(self.conn.query_row(
-      "SELECT COUNT(*) FROM messages WHERE chat_jid = ?1 AND ts >= ?2",
+      "SELECT COUNT(*) FROM messages WHERE chat_jid = ?1 AND hidden = 0 AND ts >= ?2",
       params![chat_jid, ts],
       |r| r.get(0),
     )?)

@@ -201,13 +201,14 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       messages,
       media,
       on_demand,
+      hidden_id,
     } => {
       store
         .run(move |db| {
           for (id, m) in &media {
             db.insert_media(&meta.jid, id, m)?;
           }
-          db.import_history_chat(&meta, last_ts, &messages)?;
+          db.import_history_chat(&meta, last_ts, &messages, hidden_id.as_deref())?;
           let mut out = chat_updated(db, &meta.jid)?;
           if on_demand {
             out.push(ApiEvent::HistoryLoaded {

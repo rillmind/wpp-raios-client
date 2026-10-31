@@ -125,8 +125,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
         pending: false,
       })
       try {
-        // A conversa abre só com as não lidas; o resto vem pelo "carregar mensagens".
-        const page = await api.messages(jid, { unreadOnly: true })
+        // Abre com o que está guardado e visível: na primeira vez, só as não lidas.
+        const page = await api.messages(jid)
         if (selectedRef.current !== jid) return
         setConv({
           jid,
