@@ -59,6 +59,9 @@ pub fn router(
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
     // Fora da autenticação: só diz que o processo responde (healthcheck do container).
     .route("/healthz", get(|| async { "ok" }))
+    // Fora da autenticação: no primeiro uso a pessoa ainda não tem o token à mão.
+    // Só devolve o QR enquanto não há celular pareado.
+    .route("/api/pairing", get(handlers::pairing))
     .with_state(state);
 
   let app = match front_dir {

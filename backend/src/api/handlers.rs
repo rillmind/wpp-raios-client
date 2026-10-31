@@ -41,6 +41,23 @@ pub async fn status(State(st): State<AppState>) -> Json<StatusResponse> {
   })
 }
 
+#[derive(Serialize)]
+pub struct PairingResponse {
+  state: ConnState,
+  /// SVG do QR, só enquanto espera o pareamento.
+  qr_svg: Option<String>,
+}
+
+pub async fn pairing(State(st): State<AppState>) -> Response {
+  let state = st.wa.state();
+  let qr_svg = st.wa.pairing_qr().as_deref().and_then(crate::wa::qr_svg);
+  (
+    [(header::CACHE_CONTROL, "no-store")],
+    Json(PairingResponse { state, qr_svg }),
+  )
+    .into_response()
+}
+
 #[derive(Deserialize)]
 pub struct ChatsQuery {
   limit: Option<u32>,
@@ -164,6 +181,12 @@ pub async fn send(
   Json(body): Json<SendBody>,
 ) -> ApiResult<Json<Message>> {
   validate_jid(&jid)?;
+  // Enviar para `status@broadcast` publicaria um status; canais são de leitura.
+  if jid == "status@broadcast" || jid.ends_with("@newsletter") {
+    return Err(ApiError::BadRequest(
+      "status e canais são só de leitura".into(),
+    ));
+  }
   let text = body.text.trim();
   if text.is_empty() {
     return Err(ApiError::BadRequest("texto vazio".into()));

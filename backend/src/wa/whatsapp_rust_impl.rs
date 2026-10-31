@@ -16,7 +16,7 @@ use whatsapp_rust::sync_task::MajorSyncTask;
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
 use whatsapp_rust::wacore::store::traits::AppSyncStore;
-use whatsapp_rust::wacore::types::events::LazyHistorySync;
+use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
@@ -41,6 +41,8 @@ pub struct RustWa {
   avatar_slots: Semaphore,
   /// Mesma sessão que a lib usa (o `SqliteStore` é um handle clonável).
   session: SqliteStore,
+  /// QR atual, compartilhado com o [`Translator`].
+  qr: Arc<Mutex<Option<String>>>,
 }
 
 /// Conecta (ou pareia, mostrando o QR no terminal) e passa a emitir eventos em `tx`.
@@ -52,7 +54,9 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
 
   let (state_tx, state_rx) = watch::channel(ConnState::Connecting);
   let state_tx = Arc::new(state_tx);
+  let qr = Arc::new(Mutex::new(None));
   let ctx = Arc::new(Translator {
+    qr: Arc::clone(&qr),
     tx,
     state: state_tx,
     history_limit: opts.history_msgs_per_chat,
@@ -79,6 +83,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     state: state_rx,
     avatar_slots: Semaphore::new(AVATAR_CONCURRENCY),
     session,
+    qr,
   }))
 }
 
@@ -86,6 +91,13 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
 impl WhatsApp for RustWa {
   fn state(&self) -> ConnState {
     *self.state.borrow()
+  }
+
+  fn pairing_qr(&self) -> Option<String> {
+    if self.state() != ConnState::WaitingQr {
+      return None;
+    }
+    self.qr.lock().ok().and_then(|q| q.clone())
   }
 
   async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
@@ -157,23 +169,25 @@ impl WhatsApp for RustWa {
 
   async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>> {
     let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
-    // Status e canais não respondem a esta consulta (só esperariam o timeout).
-    if !(jid.is_pn() || jid.is_lid() || jid.is_group()) {
-      return Ok(None);
-    }
     let _slot = self.avatar_slots.acquire().await?;
-    let Some(pic) = self
-      .client
-      .contacts()
-      .get_profile_picture_with_timeout(&jid, true, Some(AVATAR_TIMEOUT))
-      .await
-      .map_err(|e| anyhow!("buscando foto de perfil: {e}"))?
-    else {
+    let url = if jid.is_pn() || jid.is_lid() || jid.is_group() {
+      match self
+        .client
+        .contacts()
+        .get_profile_picture_with_timeout(&jid, true, Some(AVATAR_TIMEOUT))
+        .await
+        .map_err(|e| anyhow!("buscando foto de perfil: {e}"))?
+      {
+        Some(pic) => pic.url,
+        None => return Ok(None),
+      }
+    } else {
+      // Status não tem foto; canais, nesta versão da lib, não dão (MEX 400).
       return Ok(None);
     };
     let resp = tokio::time::timeout(
       AVATAR_TIMEOUT,
-      self.client.http_client.execute(HttpRequest::get(pic.url)),
+      self.client.http_client.execute(HttpRequest::get(url)),
     )
     .await
     .map_err(|_| anyhow!("foto de perfil: tempo esgotado"))?
@@ -206,6 +220,11 @@ impl WhatsApp for RustWa {
     Ok(())
   }
 
+  async fn chat_title(&self, jid: &str) -> Result<Option<String>> {
+    let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    chat_title(&self.client, &jid).await
+  }
+
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {
     let jid: Jid = lid_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
     Ok(
@@ -226,6 +245,8 @@ impl WhatsApp for RustWa {
 
 /// Converte eventos da biblioteca em [`WaEvent`].
 struct Translator {
+  /// Último QR de pareamento (para a interface); some ao parear.
+  qr: Arc<Mutex<Option<String>>>,
   tx: mpsc::Sender<WaEvent>,
   state: Arc<watch::Sender<ConnState>>,
   history_limit: usize,
@@ -241,7 +262,10 @@ impl Translator {
     tracing::debug!(event = ?event, "evento do WhatsApp");
 
     match event {
-      Event::Connected(_) => self.set_state(ConnState::Connected).await,
+      Event::Connected(_) => {
+        self.set_qr(None);
+        self.set_state(ConnState::Connected).await
+      }
       Event::Disconnected(_) | Event::StreamError(_) | Event::ConnectFailure(_) => {
         self.set_state(ConnState::Disconnected).await
       }
@@ -250,6 +274,7 @@ impl Translator {
         self.set_state(ConnState::LoggedOut).await
       }
       Event::PairingQrCode(qr) => {
+        self.set_qr(Some(qr.code.to_string()));
         self.set_state(ConnState::WaitingQr).await;
         match qr::render(&qr.code) {
           Some(art) => {
@@ -265,7 +290,10 @@ impl Translator {
           None => tracing::error!("não foi possível gerar o QR code"),
         }
       }
-      Event::PairSuccess(_) => tracing::info!("pareamento concluído"),
+      Event::PairSuccess(_) => {
+        self.set_qr(None);
+        tracing::info!("pareamento concluído")
+      }
       Event::Messages(batch) => {
         for inbound in batch.iter() {
           if let Some((msg, media)) = convert_live(&inbound.message, &inbound.info) {
@@ -303,6 +331,30 @@ impl Translator {
               .await;
           }
         }
+      }
+      // Visualização única chega a aparelhos conectados só como aviso, sem conteúdo
+      // (nem chave de mídia): registra a mensagem para a conversa mostrar o aviso.
+      Event::UndecryptableMessage(u) if u.unavailable_type == UnavailableType::ViewOnce => {
+        let src = &u.info.source;
+        self
+          .send(WaEvent::Message {
+            msg: Message {
+              id: u.info.id.to_string(),
+              chat_jid: src.chat.to_non_ad_string(),
+              sender_jid: Some(src.sender.to_non_ad_string()),
+              sender_name: None,
+              from_me: src.is_from_me,
+              ts: u.info.timestamp.timestamp(),
+              kind: MessageKind::ViewOnce,
+              body: None,
+              quoted_id: None,
+              status: src.is_from_me.then_some(MsgStatus::Sent),
+              is_read: src.is_from_me,
+              media: None,
+            },
+            media: None,
+          })
+          .await;
       }
       Event::Receipt(r) => {
         let ids: Vec<String> = r.message_ids.iter().map(|id| id.to_string()).collect();
@@ -469,7 +521,7 @@ impl Translator {
     }
   }
 
-  /// Busca o nome (assunto) do grupo uma vez por execução.
+  /// Busca o nome do grupo uma vez por execução.
   async fn ensure_group_name(&self, client: &Arc<Client>, chat: &Jid) {
     if !chat.is_group() {
       return;
@@ -487,20 +539,26 @@ impl Translator {
     let chat = chat.clone();
     let tx = self.tx.clone();
     tokio::spawn(async move {
-      match client.groups().get_metadata(&chat).await {
-        Ok(meta) => {
+      match chat_title(&client, &chat).await {
+        Ok(name) => {
           let _ = tx
             .send(WaEvent::ChatMeta(ChatMeta {
               jid: key,
-              name: non_empty(&meta.subject),
+              name,
               is_group: true,
               ..Default::default()
             }))
             .await;
         }
-        Err(e) => tracing::debug!(error = %e, "falha ao buscar dados do grupo"),
+        Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
       }
     });
+  }
+
+  fn set_qr(&self, code: Option<String>) {
+    if let Ok(mut q) = self.qr.lock() {
+      *q = code;
+    }
   }
 
   async fn set_state(&self, state: ConnState) {
@@ -516,6 +574,20 @@ impl Translator {
       tracing::warn!("canal de eventos fechado");
     }
   }
+}
+
+/// Assunto do grupo (consulta ao WhatsApp). Canais ficam sem nome: as consultas de
+/// canal da lib 0.7.0 são recusadas pelo servidor (MEX 400), ver `docs/FINDINGS.md`.
+async fn chat_title(client: &Client, jid: &Jid) -> Result<Option<String>> {
+  if !jid.is_group() {
+    return Ok(None);
+  }
+  let meta = client
+    .groups()
+    .get_metadata(jid)
+    .await
+    .map_err(|e| anyhow!("{e}"))?;
+  Ok(non_empty(&meta.subject))
 }
 
 fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, Option<MediaRef>)> {

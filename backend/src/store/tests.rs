@@ -344,3 +344,45 @@ fn migration_moves_dm_names_to_contacts() {
   assert_eq!(db.count_agenda_names().unwrap(), 1);
   std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn chat_list_shows_status_of_last_message_only_when_ours() {
+  let db = db();
+  db.insert_message(&msg(A, "out", 10, true, true)).unwrap();
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_status,
+    Some(MsgStatus::Sent)
+  );
+  db.set_status(A, &["out".into()], MsgStatus::Read).unwrap();
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_status,
+    Some(MsgStatus::Read)
+  );
+  // A resposta do contato vira a última: sem tiques.
+  db.insert_message(&msg(A, "in", 20, false, false)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().last_status, None);
+}
+
+#[test]
+fn pinned_chats_come_first() {
+  let db = db();
+  db.insert_message(&msg(A, "1", 10, false, true)).unwrap();
+  db.insert_message(&msg(B, "2", 20, false, true)).unwrap();
+  db.upsert_chat(&ChatMeta {
+    jid: A.into(),
+    pinned: Some(true),
+    ..Default::default()
+  })
+  .unwrap();
+  let order: Vec<String> = db
+    .list_chats(10, None)
+    .unwrap()
+    .into_iter()
+    .map(|c| c.jid)
+    .collect();
+  assert_eq!(
+    order,
+    vec![A.to_string(), B.to_string()],
+    "fixado vem antes, mesmo mais antigo"
+  );
+}

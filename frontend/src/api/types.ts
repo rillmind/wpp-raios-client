@@ -1,4 +1,4 @@
-export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'other'
+export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'view_once' | 'other'
 export type MsgStatus = 'sent' | 'delivered' | 'read'
 export type ConnState = 'connecting' | 'waiting_qr' | 'connected' | 'disconnected' | 'logged_out'
 
@@ -12,6 +12,8 @@ export interface Chat {
   unread_count: number
   last_msg_ts: number | null
   last_msg_preview: string | null
+  /** Tiques da última mensagem, quando ela é nossa. */
+  last_status: MsgStatus | null
   archived: boolean
   pinned: boolean
 }

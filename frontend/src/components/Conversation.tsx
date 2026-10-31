@@ -3,7 +3,7 @@ import type { Chat, Message } from '../api/types'
 import { Avatar } from './Avatar'
 import { Composer } from './Composer'
 import { MediaView } from './MediaView'
-import { chatName, formatPhone, formatTime, messageText, senderName } from './format'
+import { chatName, formatPhone, formatTime, isReadOnly, messageText, senderName } from './format'
 
 export interface ConvState {
   jid: string
@@ -59,6 +59,9 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
   }
 
   const isGroup = chat?.is_group ?? conv.jid.endsWith('@g.us')
+  // No status cada mensagem é de uma pessoa: mostra quem postou, como em grupo.
+  const showSender = isGroup || conv.jid === 'status@broadcast'
+  const readOnly = isReadOnly(conv.jid)
   const unread = chat?.unread_count ?? 0
 
   return (
@@ -112,7 +115,7 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
                 m.media && m.kind === 'sticker' ? 'bubble--sticker' : '',
               ].join(' ')}
             >
-              {isGroup && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
+              {showSender && !m.from_me && <span className="bubble__sender">{senderName(m)}</span>}
               {m.media ? (
                 <>
                   <MediaView chatJid={conv.jid} message={m} />
@@ -136,7 +139,11 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
         ))}
       </div>
 
-      <Composer disabled={!connected} onSend={onSend} />
+      {readOnly ? (
+        <p className="readonly-note">Status e canais são só de leitura aqui.</p>
+      ) : (
+        <Composer key={conv.jid} disabled={!connected} onSend={onSend} />
+      )}
     </section>
   )
 }

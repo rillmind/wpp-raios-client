@@ -14,6 +14,8 @@ pub enum MessageKind {
   Video,
   Doc,
   Sticker,
+  /// Visualização única: o WhatsApp não entrega o conteúdo a aparelhos conectados.
+  ViewOnce,
   Other,
 }
 
@@ -26,6 +28,7 @@ impl MessageKind {
       Self::Video => "video",
       Self::Doc => "doc",
       Self::Sticker => "sticker",
+      Self::ViewOnce => "view_once",
       Self::Other => "other",
     }
   }
@@ -38,6 +41,7 @@ impl MessageKind {
       "video" => Self::Video,
       "doc" => Self::Doc,
       "sticker" => Self::Sticker,
+      "view_once" => Self::ViewOnce,
       _ => Self::Other,
     }
   }

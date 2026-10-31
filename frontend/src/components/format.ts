@@ -6,6 +6,8 @@ const PLACEHOLDER: Record<string, string> = {
   video: '[vídeo]',
   doc: '[documento]',
   sticker: '[figurinha]',
+  // O WhatsApp não entrega o conteúdo a aparelhos conectados.
+  view_once: '📷 Visualização única — abra no celular',
   other: '[mensagem]',
 }
 
@@ -13,6 +15,27 @@ export function messageText(m: Message): string {
   if (m.kind === 'text') return m.body ?? ''
   const tag = PLACEHOLDER[m.kind] ?? '[mensagem]'
   return m.body ? `${tag} ${m.body}` : tag
+}
+
+export type Section = 'chats' | 'archived' | 'status' | 'channels'
+
+export const SECTION_TITLE: Record<Section, string> = {
+  chats: 'Conversas',
+  archived: 'Arquivadas',
+  status: 'Status',
+  channels: 'Canais',
+}
+
+/** Seção da barra lateral onde a conversa aparece. */
+export function chatSection(c: Chat): Section {
+  if (c.jid === 'status@broadcast') return 'status'
+  if (c.jid.endsWith('@newsletter')) return 'channels'
+  return c.archived ? 'archived' : 'chats'
+}
+
+/** Status e canais: só leitura (enviar no status publicaria um status). */
+export function isReadOnly(jid: string): boolean {
+  return jid === 'status@broadcast' || jid.endsWith('@newsletter')
 }
 
 export function chatName(c: Chat): string {

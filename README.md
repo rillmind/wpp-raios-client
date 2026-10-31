@@ -6,8 +6,13 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 
 - Fica conectado ao WhatsApp como um aparelho vinculado (como o WhatsApp Web) e grava as
   conversas num banco SQLite próprio. A interface lê desse banco, por isso abre na hora.
-- Lista as conversas por atividade, com contador de não lidas, arquivadas à parte e o estado da
-  conexão no topo.
+- Lista as conversas por atividade, com as fixadas no celular no topo (com um alfinete), o
+  contador de não lidas, o estado da conexão no topo e, quando a última mensagem é sua, os tiques
+  dela (✓ enviada, ✓✓ entregue, ✓✓ azul lida).
+- Uma barra lateral separa **Conversas**, **Status**, **Canais** e **Arquivadas** (com o número de
+  conversas não lidas, ou um ponto nas outras seções), e liga/desliga o "Ler ao abrir". Status e
+  canais são só de leitura: daqui não dá para postar um status nem escrever num canal. Os canais
+  aparecem como "Canal", sem nome nem foto (a biblioteca ainda não consegue buscá-los).
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem.
@@ -16,13 +21,18 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   WhatsApp quando você clica. Ficam só na memória da aba: nada vai para o disco nem para o banco
   (o banco guarda só a referência para baixar). Fechou a aba, sumiram. Figurinhas animadas
   vetoriais aparecem como `[figurinha]`, e imagens recebidas antes desta versão como `[imagem]`.
-- Abre a conversa na primeira mensagem não lida, com um separador.
-- Envia mensagens de texto (Enter envia, Shift+Enter quebra linha).
+- Abre a conversa na primeira mensagem não lida, com um separador, e com a caixa de mensagem já
+  selecionada (em telas de toque não, para não abrir o teclado). Esc fecha a conversa e volta à
+  tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
+- Envia mensagens de texto (Enter envia, Shift+Enter quebra linha). Cada conversa tem o seu
+  rascunho: trocar de conversa não leva o texto junto.
 - Marca como lida só quando você clica em "Marcar como lida", porque o contato vê o recibo; a
-  opção "Ler ao abrir" faz isso automaticamente. Marcar aqui zera o contador no celular também.
+  opção "Ler ao abrir" (o olho na barra lateral) faz isso automaticamente. Marcar aqui zera o contador no celular também.
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
   sincronização inicial). O histórico antigo continua no celular.
 - Áudio, vídeo e documentos aparecem como `[áudio]`, `[vídeo]`, `[documento]`.
+- Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
+  entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 
 ## Por que existe
 
@@ -42,9 +52,10 @@ respondendo: sem bot, sem automação, sem envio em massa (há limite de envios 
 
 ## Como rodar
 
-Em todos os jeitos abaixo, no primeiro início o QR aparece no terminal (ou nos logs). No
-celular: **WhatsApp → Aparelhos conectados → Conectar aparelho**. Depois disso ele reconecta
-sozinho. A interface pede um token uma vez: é o campo `token` de `data/config.toml`.
+Em todos os jeitos abaixo, no primeiro início o QR de pareamento aparece na primeira tela da
+interface (e também no terminal ou nos logs). No celular: **WhatsApp → Aparelhos conectados →
+Conectar aparelho**. Depois disso ele reconecta sozinho e o QR não aparece mais. A interface pede
+um token uma vez: é o campo `token` de `data/config.toml`.
 
 ### Docker (servidor)
 

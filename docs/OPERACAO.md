@@ -33,6 +33,7 @@ Tudo em `127.0.0.1`. As rotas exigem `Authorization: Bearer <token>`; só `/api/
 | Rota | |
 | --- | --- |
 | `GET /healthz` | sem token; `ok` se o processo responde |
+| `GET /api/pairing` | sem token; `{ state, qr_svg }`, com o QR só enquanto não há celular pareado |
 | `GET /api/status` | `{ state, connected }` |
 | `GET /api/chats?limit=&before_ts=` | conversas por atividade, com `name` e `phone` |
 | `GET /api/chats/{jid}/messages?limit=&before=` | últimas mensagens do banco local + `first_unread_id`; a primeira página sempre inclui todas as não lidas. Mensagens com imagem/figurinha trazem `media` |

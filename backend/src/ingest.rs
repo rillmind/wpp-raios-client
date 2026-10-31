@@ -66,6 +66,41 @@ pub async fn backfill_lids(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender
   tracing::info!(lids = lids.len(), found, "telefones dos @lid conferidos");
 }
 
+/// Busca o nome dos grupos que ficaram sem nome (ele só era buscado quando chegava
+/// mensagem nova). Grupos de que a pessoa saiu respondem 403 e ficam sem nome.
+pub async fn backfill_titles(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender<WaEvent>) {
+  while wa.state() != crate::model::ConnState::Connected {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+  }
+  let jids = match store.run(|db| db.untitled_groups()).await {
+    Ok(j) => j,
+    Err(e) => {
+      tracing::error!(error = %e, "falha ao listar grupos sem nome");
+      return;
+    }
+  };
+  let mut found = 0;
+  for jid in &jids {
+    match wa.chat_title(jid).await {
+      Ok(Some(name)) => {
+        found += 1;
+        let meta = crate::model::ChatMeta {
+          jid: jid.clone(),
+          name: Some(name),
+          is_group: true,
+          ..Default::default()
+        };
+        if tx.send(WaEvent::ChatMeta(meta)).await.is_err() {
+          return;
+        }
+      }
+      Ok(None) => {}
+      Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
+    }
+  }
+  tracing::info!(chats = jids.len(), found, "nomes de grupos conferidos");
+}
+
 /// Tarefa única: pede a agenda de novo assim que conectar (ver migração 4).
 pub async fn resync_contacts_once(store: Store, wa: Arc<dyn WhatsApp>) {
   const TASK: &str = "contacts_resync";
@@ -165,15 +200,20 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       store
         .run(move |db| {
           let ids = db.set_status(&chat_jid, &ids, status)?;
-          Ok(if ids.is_empty() {
-            vec![]
-          } else {
-            vec![ApiEvent::MessageStatus {
+          if ids.is_empty() {
+            return Ok(vec![]);
+          }
+          // A lista mostra os tiques da última mensagem: atualiza o chat também.
+          let mut out = chat_updated(db, &chat_jid)?;
+          out.insert(
+            0,
+            ApiEvent::MessageStatus {
               chat_jid,
               ids,
               status,
-            }]
-          })
+            },
+          );
+          Ok(out)
         })
         .await?
     }
