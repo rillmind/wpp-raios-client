@@ -46,6 +46,10 @@ async fn main() -> Result<()> {
     Arc::clone(&whatsapp),
     tx,
   ));
+  tokio::spawn(ingest::resync_contacts_once(
+    store.clone(),
+    Arc::clone(&whatsapp),
+  ));
 
   let (events, _) = broadcast::channel(1024);
   let (drain_tx, drain_rx) = oneshot::channel();

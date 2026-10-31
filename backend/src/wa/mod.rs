@@ -87,6 +87,10 @@ pub trait WhatsApp: Send + Sync {
   /// Foto de perfil (miniatura) de uma pessoa ou grupo; `None` se não houver.
   async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>>;
 
+  /// Pede ao WhatsApp a agenda inteira de novo; cada contato salvo chega como
+  /// [`WaEvent::Contact`] com `contact_name`.
+  async fn resync_contacts(&self) -> Result<()>;
+
   /// Jid de telefone de um `@lid`, pelo que a sessão já aprendeu (sem rede).
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>>;
 

@@ -71,6 +71,13 @@ pub(super) const MIGRATIONS: &[&str] = &[
      height          INTEGER,
      PRIMARY KEY (chat_jid, msg_id)
    );",
+  // 4: os nomes por telefone migrados na versão 2 eram, quase todos, apelidos (o histórico
+  // os gravou por cima dos nomes da agenda). Voltam a ser apelido, e a agenda é pedida de
+  // novo ao WhatsApp uma vez (tarefa pendente `contacts_resync`).
+  "UPDATE contacts SET push_name = COALESCE(push_name, contact_name), contact_name = NULL
+     WHERE jid LIKE '%@s.whatsapp.net';
+   CREATE TABLE pending_tasks (name TEXT PRIMARY KEY);
+   INSERT INTO pending_tasks (name) VALUES ('contacts_resync');",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

@@ -12,6 +12,10 @@ use tokio::sync::{mpsc, watch, Semaphore};
 use whatsapp_rust::download::{DownloadParams, MediaType};
 use whatsapp_rust::http::HttpRequest;
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::sync_task::MajorSyncTask;
+use whatsapp_rust::wacore::appstate::hash::HashState;
+use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
+use whatsapp_rust::wacore::store::traits::AppSyncStore;
 use whatsapp_rust::wacore::types::events::LazyHistorySync;
 use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
@@ -35,6 +39,8 @@ pub struct RustWa {
   handle: tokio::sync::Mutex<Option<BotHandle>>,
   state: watch::Receiver<ConnState>,
   avatar_slots: Semaphore,
+  /// Mesma sessão que a lib usa (o `SqliteStore` é um handle clonável).
+  session: SqliteStore,
 }
 
 /// Conecta (ou pareia, mostrando o QR no terminal) e passa a emitir eventos em `tx`.
@@ -54,6 +60,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     lids_seen: Mutex::new(HashSet::new()),
   });
 
+  let session = store.clone();
   let bot = Bot::builder()
     .with_backend(store)
     .on_event(move |event, client| {
@@ -71,6 +78,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     handle: tokio::sync::Mutex::new(Some(handle)),
     state: state_rx,
     avatar_slots: Semaphore::new(AVATAR_CONCURRENCY),
+    session,
   }))
 }
 
@@ -174,6 +182,28 @@ impl WhatsApp for RustWa {
       return Err(anyhow!("foto de perfil: HTTP {}", resp.status_code));
     }
     Ok(Some(resp.body))
+  }
+
+  async fn resync_contacts(&self) -> Result<()> {
+    // Os contatos ficam na coleção `critical_unblock_low`. A lib só aplica um
+    // snapshot mais novo que a versão guardada, então a versão volta a 0 (como
+    // num aparelho recém-pareado) e o snapshot inteiro é pedido. Ao aplicá-lo a
+    // lib refaz o estado da coleção do zero (ltHash e MACs) e só então grava a
+    // versão nova.
+    let name = WAPatchName::CriticalUnblockLow;
+    self
+      .session
+      .set_version(name.as_str(), HashState::default())
+      .await
+      .map_err(|e| anyhow!("zerando a versão dos contatos: {e}"))?;
+    self
+      .client
+      .process_sync_task(MajorSyncTask::AppStateSync {
+        name,
+        full_sync: true,
+      })
+      .await;
+    Ok(())
   }
 
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {

@@ -270,6 +270,36 @@ impl Db {
     )
   }
 
+  /// Tarefa única ainda não feita (criada por migração).
+  pub fn has_pending_task(&self, name: &str) -> Result<bool> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          "SELECT 1 FROM pending_tasks WHERE name = ?1",
+          params![name],
+          |_| Ok(()),
+        )
+        .optional()?
+        .is_some(),
+    )
+  }
+
+  pub fn count_agenda_names(&self) -> Result<u32> {
+    Ok(self.conn.query_row(
+      "SELECT COUNT(*) FROM contacts WHERE contact_name IS NOT NULL",
+      [],
+      |r| r.get(0),
+    )?)
+  }
+
+  pub fn finish_pending_task(&self, name: &str) -> Result<()> {
+    self
+      .conn
+      .execute("DELETE FROM pending_tasks WHERE name = ?1", params![name])?;
+    Ok(())
+  }
+
   /// Grava nomes de uma pessoa; campos `None` não apagam os salvos.
   pub fn upsert_contact(&self, c: &Contact) -> Result<()> {
     self.conn.execute(

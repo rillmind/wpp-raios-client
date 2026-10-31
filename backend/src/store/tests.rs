@@ -326,9 +326,21 @@ fn migration_moves_dm_names_to_contacts() {
     vec![
       (GROUP, Some("Família")),
       ("777@lid", None),
-      (LID, Some("José da Silva"))
+      (LID, Some("Zé"))
     ],
-    "entrada só de telefone some; nome mascarado é descartado"
+    "entrada só de telefone some; nome mascarado é descartado; nome por telefone vira apelido"
   );
+
+  // A agenda é pedida de novo uma vez, e o nome que chega dela vence o apelido.
+  assert!(db.has_pending_task("contacts_resync").unwrap());
+  db.upsert_contact(&contact(PN, Some("José da Silva"), None))
+    .unwrap();
+  db.finish_pending_task("contacts_resync").unwrap();
+  assert!(!db.has_pending_task("contacts_resync").unwrap());
+  assert_eq!(
+    db.get_chat(LID).unwrap().unwrap().name.as_deref(),
+    Some("José da Silva")
+  );
+  assert_eq!(db.count_agenda_names().unwrap(), 1);
   std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -63,6 +63,10 @@ impl WhatsApp for FakeWa {
     }
   }
 
+  async fn resync_contacts(&self) -> Result<()> {
+    Ok(())
+  }
+
   async fn phone_for_lid(&self, _lid_jid: &str) -> Result<Option<String>> {
     Ok(None)
   }
