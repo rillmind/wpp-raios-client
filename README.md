@@ -52,7 +52,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   pessoa apaga para todos viram "Mensagem apagada" aqui também.
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
-  abrir não marca nada: só o botão "Marcar como lida" faz isso.
+  abrir não marca nada: só o botão "Marcar como lida" faz isso. O que você lê no celular também
+  aparece como lido aqui.
 - Guarda o que chega a partir do pareamento, e tudo o que já foi carregado fica guardado. Na
   primeira vez, cada conversa mostra só as mensagens não lidas; sem nenhuma, abre vazia com o
   botão "Carregar mensagens". O botão mostra as 20 anteriores, pedindo ao celular o que não

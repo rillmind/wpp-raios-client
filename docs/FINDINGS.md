@@ -72,7 +72,10 @@ A própria lib reconecta sozinha (`enable_auto_reconnect`, contador de erros com
    (`None` é aceito segundo o comentário da lib).
 
 No sentido inverso (lido no celular), chegam `Event::MarkChatAsReadUpdate` (com `action.read`) e
-`Event::Receipt` do tipo `ReadSelf`; os dois atualizam o banco local.
+`Event::Receipt` do tipo `ReadSelf`; os dois atualizam o banco local. Abrir a conversa no celular
+só gera o `ReadSelf`. Em conversa individual ele vem com `from` = o nosso próprio jid e a conversa
+no atributo `recipient`, que a whatsapp-rust 0.7 não repassa (`MessageSource.recipient` fica
+vazio). Nesse caso a conversa é achada pelo id das mensagens.
 
 ## 5. Como enviar texto?
 

@@ -802,6 +802,14 @@ impl Translator {
           ReceiptType::Delivered => Some(MsgStatus::Delivered),
           ReceiptType::Read | ReceiptType::Played => Some(MsgStatus::Read),
           ReceiptType::ReadSelf | ReceiptType::PlayedSelf => {
+            // Em conversa individual o recibo vem do nosso próprio jid, com a conversa no
+            // atributo `recipient`, que a whatsapp-rust 0.7 não repassa.
+            let chat = r.source.chat.to_non_ad();
+            let own = [client.pn(), client.lid()]
+              .into_iter()
+              .flatten()
+              .any(|j| j.to_non_ad() == chat);
+            let chat_jid = (!own).then_some(chat_jid);
             self.send(WaEvent::ReadElsewhere { chat_jid, ids }).await;
             return;
           }
