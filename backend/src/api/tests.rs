@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::*;
-use crate::model::{ConnState, Message, MessageKind};
+use crate::model::{ConnState, MediaRef, Message, MessageKind};
 use crate::store::Db;
 use crate::wa::{Sent, UnreadRef};
 
@@ -49,6 +49,18 @@ impl WhatsApp for FakeWa {
     let ids = unread.iter().map(|u| u.id.clone()).collect();
     self.read.lock().unwrap().push((chat_jid.into(), ids));
     Ok(())
+  }
+
+  async fn download_media(&self, media: &MediaRef) -> Result<Vec<u8>> {
+    Ok(format!("bytes de {}", media.direct_path).into_bytes())
+  }
+
+  async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>> {
+    match jid {
+      A => Ok(Some(b"foto".to_vec())),
+      "erro@s.whatsapp.net" => Err(anyhow::anyhow!("privado")),
+      _ => Ok(None),
+    }
   }
 
   async fn phone_for_lid(&self, _lid_jid: &str) -> Result<Option<String>> {
@@ -105,6 +117,7 @@ fn incoming(id: &str, ts: i64, is_read: bool) -> Message {
     quoted_id: None,
     status: None,
     is_read,
+    media: None,
   }
 }
 
@@ -364,7 +377,10 @@ async fn sse_sends_state_then_live_events() {
   // Simula uma mensagem chegando do WhatsApp pelo ingest.
   let out = crate::ingest::apply(
     &h.store,
-    crate::wa::WaEvent::Message(incoming("9", 99, false)),
+    crate::wa::WaEvent::Message {
+      msg: incoming("9", 99, false),
+      media: None,
+    },
   )
   .await
   .unwrap();
@@ -431,4 +447,109 @@ async fn next_chunk(body: &mut Body) -> String {
     .expect("SSE terminou")
     .unwrap();
   String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap()
+}
+
+/// GET cru (sem JSON): status, Content-Type, Cache-Control e corpo.
+async fn get_raw(h: &Harness, uri: &str) -> (StatusCode, Option<String>, Option<String>, Vec<u8>) {
+  let req = Request::get(uri)
+    .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+    .body(Body::empty())
+    .unwrap();
+  let resp = h.app.clone().oneshot(req).await.unwrap();
+  let hv = |name| {
+    resp
+      .headers()
+      .get(name)
+      .and_then(|v| v.to_str().ok())
+      .map(str::to_string)
+  };
+  let (ct, cc) = (hv(header::CONTENT_TYPE), hv(header::CACHE_CONTROL));
+  let status = resp.status();
+  let body = resp
+    .into_body()
+    .collect()
+    .await
+    .unwrap()
+    .to_bytes()
+    .to_vec();
+  (status, ct, cc, body)
+}
+
+fn media_ref(kind: MessageKind, mimetype: &str) -> MediaRef {
+  MediaRef {
+    kind,
+    direct_path: "/v/t62/abc".into(),
+    media_key: Some(vec![1; 32]),
+    file_sha256: vec![2; 32],
+    file_enc_sha256: Some(vec![3; 32]),
+    file_length: 10,
+    mimetype: Some(mimetype.into()),
+    width: Some(800),
+    height: Some(600),
+  }
+}
+
+#[tokio::test]
+async fn media_is_downloaded_on_demand_and_not_cached() {
+  let h = harness();
+  let mut photo = incoming("foto", 10, true);
+  photo.kind = MessageKind::Image;
+  let mut evil = incoming("html", 20, true);
+  evil.kind = MessageKind::Image;
+  seed(&h, vec![photo, evil, incoming("texto", 30, true)]).await;
+  h.store
+    .run(|db| {
+      db.insert_media(A, "foto", &media_ref(MessageKind::Image, "image/jpeg"))?;
+      db.insert_media(A, "html", &media_ref(MessageKind::Image, "text/html"))
+    })
+    .await
+    .unwrap();
+
+  let (status, json) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  assert_eq!(status, StatusCode::OK);
+  let msgs = json["messages"].as_array().unwrap();
+  assert_eq!(
+    msgs[0]["media"],
+    json!({ "mimetype": "image/jpeg", "width": 800, "height": 600 })
+  );
+  assert!(msgs[2].get("media").is_none(), "texto não tem mídia");
+
+  let (status, ct, cc, body) = get_raw(&h, &format!("/api/chats/{A}/messages/foto/media")).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(ct.as_deref(), Some("image/jpeg"));
+  assert_eq!(cc.as_deref(), Some("no-store"));
+  assert_eq!(body, b"bytes de /v/t62/abc");
+
+  // Mimetype vindo de quem mandou não vira text/html.
+  let (_, ct, _, _) = get_raw(&h, &format!("/api/chats/{A}/messages/html/media")).await;
+  assert_eq!(ct.as_deref(), Some("image/jpeg"));
+
+  let (status, ..) = get_raw(&h, &format!("/api/chats/{A}/messages/texto/media")).await;
+  assert_eq!(status, StatusCode::NOT_FOUND);
+  let (status, ..) = get_raw(&h, &format!("/api/chats/{A}/messages/a%2Fb/media")).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn avatar_returns_picture_or_no_content() {
+  let h = harness();
+  let (status, ct, cc, body) = get_raw(&h, &format!("/api/chats/{A}/avatar")).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(ct.as_deref(), Some("image/jpeg"));
+  assert_eq!(cc.as_deref(), Some("no-store"));
+  assert_eq!(body, b"foto");
+  for jid in ["sem@s.whatsapp.net", "erro@s.whatsapp.net"] {
+    let (status, ..) = get_raw(&h, &format!("/api/chats/{jid}/avatar")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{jid}");
+  }
+}
+
+#[tokio::test]
+async fn media_and_avatar_need_connection() {
+  let h = harness_with(FakeWa {
+    offline: true,
+    ..Default::default()
+  });
+  let (status, ..) = get_raw(&h, &format!("/api/chats/{A}/avatar")).await;
+  assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }

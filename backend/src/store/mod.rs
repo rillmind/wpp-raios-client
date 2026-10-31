@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use crate::model::{ChatMeta, Contact, Message, MessageKind, MsgStatus};
+use crate::model::{ChatMeta, Contact, MediaInfo, MediaRef, Message, MessageKind, MsgStatus};
 
 /// Item da lista de chats.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -215,6 +215,59 @@ impl Db {
       changed.push(id.clone());
     }
     Ok(changed)
+  }
+
+  /// Guarda a referência de download da mídia de uma mensagem (não o arquivo).
+  pub fn insert_media(&self, chat_jid: &str, msg_id: &str, m: &MediaRef) -> Result<()> {
+    self.conn.execute(
+      "INSERT INTO media (chat_jid, msg_id, kind, direct_path, media_key, file_sha256,
+         file_enc_sha256, file_length, mimetype, width, height)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+       ON CONFLICT(chat_jid, msg_id) DO NOTHING",
+      params![
+        chat_jid,
+        msg_id,
+        m.kind.as_str(),
+        m.direct_path,
+        m.media_key,
+        m.file_sha256,
+        m.file_enc_sha256,
+        m.file_length as i64,
+        m.mimetype,
+        m.width,
+        m.height,
+      ],
+    )?;
+    Ok(())
+  }
+
+  pub fn get_media(&self, chat_jid: &str, msg_id: &str) -> Result<Option<MediaRef>> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          "SELECT kind, direct_path, media_key, file_sha256, file_enc_sha256, file_length,
+             mimetype, width, height
+           FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+          params![chat_jid, msg_id],
+          |r| {
+            let kind: String = r.get(0)?;
+            let len: i64 = r.get(5)?;
+            Ok(MediaRef {
+              kind: MessageKind::parse(&kind),
+              direct_path: r.get(1)?,
+              media_key: r.get(2)?,
+              file_sha256: r.get(3)?,
+              file_enc_sha256: r.get(4)?,
+              file_length: u64::try_from(len).unwrap_or(0),
+              mimetype: r.get(6)?,
+              width: r.get(7)?,
+              height: r.get(8)?,
+            })
+          },
+        )
+        .optional()?,
+    )
   }
 
   /// Grava nomes de uma pessoa; campos `None` não apagam os salvos.
@@ -443,8 +496,10 @@ fn display_name(name: Option<String>, pn: Option<String>) -> Option<String> {
 fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
-       m.status, m.is_read, {}
+       m.status, m.is_read, {},
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height
      FROM messages m
+     LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
      LEFT JOIN contacts sd ON sd.jid = m.sender_jid
      LEFT JOIN contacts sp ON sp.jid = sm.pn",
@@ -487,6 +542,15 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
     quoted_id: r.get(7)?,
     status: status.as_deref().and_then(MsgStatus::parse),
     is_read: r.get(9)?,
+    media: if r.get(12)? {
+      Some(MediaInfo {
+        mimetype: r.get(13)?,
+        width: r.get(14)?,
+        height: r.get(15)?,
+      })
+    } else {
+      None
+    },
   })
 }
 

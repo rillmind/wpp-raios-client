@@ -2,7 +2,9 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
+use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures_util::stream::{self, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,8 @@ const MAX_MESSAGES: u32 = 200;
 /// Teto ao expandir a página para incluir todas as não lidas.
 const MAX_UNREAD_PAGE: u32 = 1000;
 const MAX_TEXT_CHARS: usize = 4096;
+/// Imagens e figurinhas maiores que isso não são baixadas.
+const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
@@ -191,6 +195,7 @@ pub async fn send(
     quoted_id: None,
     status: Some(MsgStatus::Sent),
     is_read: true,
+    media: None,
   };
   let m = msg.clone();
   let chat = st
@@ -205,6 +210,73 @@ pub async fn send(
     let _ = st.events.send(ApiEvent::ChatUpdated(chat));
   }
   Ok(Json(msg))
+}
+
+/// Baixa a imagem/figurinha do CDN na hora e repassa; nada é gravado.
+pub async fn media(
+  State(st): State<AppState>,
+  Path((jid, id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+  validate_jid(&jid)?;
+  validate_msg_id(&id)?;
+  let media = st
+    .store
+    .run(move |db| db.get_media(&jid, &id))
+    .await?
+    .ok_or(ApiError::NotFound)?;
+  if media.file_length > MAX_MEDIA_BYTES {
+    return Err(ApiError::BadRequest("mídia grande demais".into()));
+  }
+  ensure_connected(&st)?;
+  let bytes = st
+    .wa
+    .download_media(&media)
+    .await
+    .map_err(ApiError::Upstream)?;
+  Ok(image_response(
+    bytes,
+    image_type(media.mimetype.as_deref(), media.kind),
+  ))
+}
+
+/// Foto de perfil (miniatura), buscada na hora. 204 quando não há (ou é privada).
+pub async fn avatar(State(st): State<AppState>, Path(jid): Path<String>) -> ApiResult<Response> {
+  validate_jid(&jid)?;
+  ensure_connected(&st)?;
+  match st.wa.profile_picture(&jid).await {
+    Ok(Some(bytes)) => Ok(image_response(bytes, "image/jpeg")),
+    Ok(None) => Ok(StatusCode::NO_CONTENT.into_response()),
+    // Comum (privacidade, contato sem conta); não vale um aviso por contato.
+    Err(e) => {
+      tracing::debug!(error = %e, "foto de perfil indisponível");
+      Ok(StatusCode::NO_CONTENT.into_response())
+    }
+  }
+}
+
+/// `no-store`: o navegador guarda só na memória da aba (ver front), nunca em disco.
+fn image_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
+  (
+    [
+      (header::CONTENT_TYPE, content_type),
+      (header::CACHE_CONTROL, "no-store"),
+      (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+    ],
+    bytes,
+  )
+    .into_response()
+}
+
+/// O mimetype vem de quem mandou a mensagem: só tipos de imagem conhecidos passam.
+fn image_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
+  match mimetype.and_then(|m| m.split(';').next()).map(str::trim) {
+    Some("image/jpeg") => "image/jpeg",
+    Some("image/png") => "image/png",
+    Some("image/webp") => "image/webp",
+    Some("image/gif") => "image/gif",
+    _ if kind == MessageKind::Sticker => "image/webp",
+    _ => "image/jpeg",
+  }
 }
 
 pub async fn events(
@@ -252,6 +324,19 @@ fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> ApiResult<u32> {
     None => Ok(default),
     Some(0) => Err(ApiError::BadRequest("limit deve ser > 0".into())),
     Some(n) => Ok(n.min(max)),
+  }
+}
+
+fn validate_msg_id(id: &str) -> ApiResult<()> {
+  if !id.is_empty()
+    && id.len() <= 128
+    && id
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+  {
+    Ok(())
+  } else {
+    Err(ApiError::BadRequest("id inválido".into()))
   }
 }
 

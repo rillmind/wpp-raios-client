@@ -98,6 +98,44 @@ pub struct Message {
   pub quoted_id: Option<String>,
   pub status: Option<MsgStatus>,
   pub is_read: bool,
+  /// Imagem ou figurinha que pode ser baixada (`GET .../media`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub media: Option<MediaInfo>,
+}
+
+/// O que o front precisa para reservar espaço antes de baixar a mídia.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MediaInfo {
+  pub mimetype: Option<String>,
+  pub width: Option<u32>,
+  pub height: Option<u32>,
+}
+
+/// Referência para baixar uma mídia do CDN do WhatsApp na hora em que for vista.
+///
+/// Só isto vai para o banco (caminho, chave e hashes); o arquivo nunca é guardado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaRef {
+  /// `Image` ou `Sticker`.
+  pub kind: MessageKind,
+  pub direct_path: String,
+  pub media_key: Option<Vec<u8>>,
+  pub file_sha256: Vec<u8>,
+  pub file_enc_sha256: Option<Vec<u8>>,
+  pub file_length: u64,
+  pub mimetype: Option<String>,
+  pub width: Option<u32>,
+  pub height: Option<u32>,
+}
+
+impl MediaRef {
+  pub fn info(&self) -> MediaInfo {
+    MediaInfo {
+      mimetype: self.mimetype.clone(),
+      width: self.width,
+      height: self.height,
+    }
+  }
 }
 
 /// Nomes de uma pessoa (chave: jid `@s.whatsapp.net` ou `@lid`). `None` não sobrescreve.

@@ -17,6 +17,7 @@ fn msg(chat: &str, id: &str, ts: i64, from_me: bool, is_read: bool) -> Message {
     quoted_id: None,
     status: from_me.then_some(MsgStatus::Sent),
     is_read,
+    media: None,
   }
 }
 

@@ -82,9 +82,12 @@ async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent
 pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
   let out = match ev {
     WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
-    WaEvent::Message(mut msg) => {
+    WaEvent::Message { mut msg, media } => {
       store
         .run(move |db| {
+          if let Some(media) = &media {
+            db.insert_media(&msg.chat_jid, &msg.id, media)?;
+          }
           if !db.insert_message(&msg)? {
             return Ok(vec![]);
           }
@@ -104,9 +107,13 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       meta,
       last_ts,
       messages,
+      media,
     } => {
       store
         .run(move |db| {
+          for (id, m) in &media {
+            db.insert_media(&meta.jid, id, m)?;
+          }
           db.import_history_chat(&meta, last_ts, &messages)?;
           chat_updated(db, &meta.jid)
         })
