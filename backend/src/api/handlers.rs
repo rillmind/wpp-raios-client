@@ -366,6 +366,7 @@ pub async fn send(
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   };
   let m = msg.clone();
   let chat = st
@@ -677,6 +678,7 @@ pub async fn forward(
       media: msg.media.clone(),
       starred: false,
       pinned: false,
+      mentions: vec![],
     };
     let (c, m) = (copy.clone(), media.clone());
     let chat = st
@@ -799,6 +801,7 @@ pub async fn send_media(
     media: Some(media.info()),
     starred: false,
     pinned: false,
+    mentions: vec![],
   };
   let m = msg.clone();
   let chat = st

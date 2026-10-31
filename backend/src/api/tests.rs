@@ -206,6 +206,7 @@ fn incoming(id: &str, ts: i64, is_read: bool) -> Message {
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   }
 }
 

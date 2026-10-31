@@ -174,6 +174,10 @@ async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent
 pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
   let out = match ev {
     WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
+    WaEvent::Me { jids } => {
+      store.run(move |db| db.set_me(&jids)).await?;
+      vec![]
+    }
     WaEvent::Message { mut msg, media } => {
       store
         .run(move |db| {
@@ -186,6 +190,7 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
           if let Some(sender) = &msg.sender_jid {
             msg.sender_name = db.person_name(sender)?;
           }
+          db.name_mentions(std::slice::from_mut(&mut msg))?;
           let mut out = vec![];
           if let Some(chat) = db.get_chat(&msg.chat_jid)? {
             out.push(ApiEvent::ChatUpdated(chat));

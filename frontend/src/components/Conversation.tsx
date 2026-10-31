@@ -4,6 +4,7 @@ import { Avatar } from './Avatar'
 import { Composer, type FileMeta } from './Composer'
 import { MediaView } from './MediaView'
 import { MessageMenu, type MessagePick } from './MessageMenu'
+import { RichText } from './RichText'
 import {
   chatName,
   formatPhone,
@@ -53,10 +54,6 @@ function jumpTo(id: string) {
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   el.classList.add('bubble--flash')
   setTimeout(() => el.classList.remove('bubble--flash'), 1200)
-}
-
-function quoteText(m: Message): string {
-  return m.kind === 'text' ? (m.body ?? '') : messageText(m)
 }
 
 const STATUS_ICON: Record<string, string> = { sent: '✓', delivered: '✓✓', read: '✓✓' }
@@ -160,7 +157,7 @@ export function Conversation({
       {pinned && (
         <button type="button" className="pinned-bar" onClick={() => jumpTo(pinned.id)}>
           <span aria-hidden="true">📌</span>
-          <span className="pinned-bar__text">{quoteText(pinned)}</span>
+          <span className="pinned-bar__text">{messageText(pinned)}</span>
         </button>
       )}
 
@@ -237,7 +234,7 @@ export function Conversation({
                     {byId.has(m.quoted_id) ? (
                       <>
                         <span className="quote__who">{who(byId.get(m.quoted_id)!)}</span>
-                        <span className="quote__text">{quoteText(byId.get(m.quoted_id)!)}</span>
+                        <span className="quote__text">{messageText(byId.get(m.quoted_id)!)}</span>
                       </>
                     ) : (
                       <span className="quote__text">Mensagem citada</span>
@@ -248,11 +245,15 @@ export function Conversation({
                   <>
                     <MediaView chatJid={conv.jid} message={m} />
                     {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
-                    {m.body && m.body !== m.media.file_name && <span className="bubble__text">{m.body}</span>}
+                    {m.body && m.body !== m.media.file_name && (
+                      <span className="bubble__text">
+                        <RichText text={m.body} mentions={m.mentions} />
+                      </span>
+                    )}
                   </>
                 ) : (
                   <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                    {messageText(m)}
+                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} /> : messageText(m)}
                   </span>
                 )}
                 <span className="bubble__meta">
@@ -278,7 +279,7 @@ export function Conversation({
           disabled={!connected}
           onSend={onSend}
           onSendFile={onSendFile}
-          reply={replyTo ? { who: who(replyTo), text: quoteText(replyTo) } : null}
+          reply={replyTo ? { who: who(replyTo), text: messageText(replyTo) } : null}
           onCancelReply={onCancelReply}
         />
       )}

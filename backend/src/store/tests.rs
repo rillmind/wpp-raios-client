@@ -20,6 +20,7 @@ fn msg(chat: &str, id: &str, ts: i64, from_me: bool, is_read: bool) -> Message {
     media: None,
     starred: false,
     pinned: false,
+    mentions: vec![],
   }
 }
 
@@ -491,4 +492,35 @@ fn hidden_anchor_shows_only_after_reveal_and_never_hides_a_visible_one() {
   )
   .unwrap();
   assert_eq!(db.last_messages(A, 10, None).unwrap().len(), 1);
+}
+
+#[test]
+fn mentions_get_names_in_messages_and_preview() {
+  let mut db = db();
+  db.set_me(&["999@s.whatsapp.net".into()]).unwrap();
+  db.upsert_contact(&Contact {
+    jid: B.into(),
+    contact_name: Some("Bia".into()),
+    push_name: None,
+  })
+  .unwrap();
+  let mut m = msg(A, "1", 100, false, false);
+  m.body = Some("oi @222 e @999".into());
+  m.mentions = vec![Mention::new(B), Mention::new("999@s.whatsapp.net")];
+  db.insert_message(&m).unwrap();
+
+  let got = db.get_message(A, "1").unwrap().unwrap();
+  assert_eq!(got.mentions.len(), 2);
+  assert_eq!(got.mentions[0].name.as_deref(), Some("Bia"));
+  assert!(!got.mentions[0].me);
+  assert_eq!(got.mentions[1].name.as_deref(), Some("Você"));
+  assert!(got.mentions[1].me);
+  assert_eq!(
+    db.last_messages(A, 10, None).unwrap()[0].mentions,
+    got.mentions
+  );
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_msg_preview.as_deref(),
+    Some("oi @Bia e @Você")
+  );
 }

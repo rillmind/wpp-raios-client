@@ -1,4 +1,4 @@
-import type { Chat, Message } from '../api/types'
+import type { Chat, Mention, Message } from '../api/types'
 
 const PLACEHOLDER: Record<string, string> = {
   image: '[imagem]',
@@ -13,9 +13,45 @@ const PLACEHOLDER: Record<string, string> = {
 }
 
 export function messageText(m: Message): string {
-  if (m.kind === 'text') return m.body ?? ''
+  const body = m.body && withMentionNames(m.body, m.mentions)
+  if (m.kind === 'text') return body ?? ''
   const tag = PLACEHOLDER[m.kind] ?? '[mensagem]'
-  return m.body ? `${tag} ${m.body}` : tag
+  return body ? `${tag} ${body}` : tag
+}
+
+/** Uma parte do texto: comum ou uma marcação (`@Nome`). */
+export type TextPart = { text: string; mention?: Mention }
+
+/** Divide o texto nas marcações (`@` + usuário do jid), na ordem em que aparecem. */
+export function splitMentions(text: string, mentions: Mention[] | undefined): TextPart[] {
+  const byUser = new Map<string, Mention>()
+  for (const m of mentions ?? []) byUser.set(m.jid.split('@')[0], m)
+  if (byUser.size === 0) return [{ text }]
+  // Usuários mais longos primeiro, e sem dígito depois, para @123 não pegar o começo de @1234.
+  const users = [...byUser.keys()].sort((a, b) => b.length - a.length)
+  const re = new RegExp(`@(${users.map(escapeRe).join('|')})(?!\\d)`, 'g')
+  const parts: TextPart[] = []
+  let last = 0
+  for (const match of text.matchAll(re)) {
+    const at = match.index
+    if (at > last) parts.push({ text: text.slice(last, at) })
+    const mention = byUser.get(match[1])!
+    parts.push({ text: `@${mention.name ?? match[1]}`, mention })
+    last = at + match[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
+/** O texto com cada marcação trocada pelo `@Nome`. */
+export function withMentionNames(text: string, mentions: Mention[] | undefined): string {
+  return splitMentions(text, mentions)
+    .map((p) => p.text)
+    .join('')
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 export type Section = 'chats' | 'archived' | 'status' | 'channels'

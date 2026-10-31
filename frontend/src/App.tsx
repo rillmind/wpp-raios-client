@@ -8,7 +8,7 @@ import type { FileMeta } from './components/Composer'
 import { Confirm, type ConfirmRequest } from './components/Dialog'
 import { ForwardDialog } from './components/ForwardDialog'
 import type { MessagePick } from './components/MessageMenu'
-import { copyText, securityCode, shuffledPalette } from './components/format'
+import { copyText, securityCode, shuffledPalette, withMentionNames } from './components/format'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -367,7 +367,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       case 'reply':
         return setReplyTo(m)
       case 'copy':
-        return void copy(m.body ?? '', 'Texto')
+        return void copy(withMentionNames(m.body ?? '', m.mentions), 'Texto')
       case 'copy_code': {
         const code = securityCode(m.body)
         return code ? void copy(code, 'Código') : undefined

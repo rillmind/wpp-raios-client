@@ -20,6 +20,10 @@ pub use whatsapp_rust_impl::{start, WaOptions};
 #[derive(Debug, Clone)]
 pub enum WaEvent {
   Connection(ConnState),
+  /// Os nossos jids (telefone e `@lid`), a cada conexão.
+  Me {
+    jids: Vec<String>,
+  },
   /// Mensagem apagada para todos por quem mandou.
   Revoked {
     chat_jid: String,

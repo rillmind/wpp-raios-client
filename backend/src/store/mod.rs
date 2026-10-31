@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
 use crate::model::{
-  ChatAction, ChatMeta, Contact, MediaInfo, MediaRef, Message, MessageKind, MsgStatus,
+  ChatAction, ChatMeta, Contact, MediaInfo, MediaRef, Mention, Message, MessageKind, MsgStatus,
 };
 
 /// Item da lista de chats.
@@ -77,6 +77,47 @@ impl Db {
     upsert_chat(&self.conn, meta)
   }
 
+  /// Prévia para a lista, com as marcações já trocadas pelo nome.
+  fn named_preview(&self, msg: &Message) -> Result<String> {
+    let mut msg = msg.clone();
+    self.name_mentions(std::slice::from_mut(&mut msg))?;
+    Ok(with_mention_names(&preview(&msg), &msg.mentions))
+  }
+
+  /// Preenche o nome de cada pessoa marcada ("Você" para nós).
+  pub fn name_mentions(&self, msgs: &mut [Message]) -> Result<()> {
+    for m in msgs.iter_mut().flat_map(|m| m.mentions.iter_mut()) {
+      m.me = self.is_me(&m.jid)?;
+      m.name = if m.me {
+        Some("Você".into())
+      } else {
+        self.person_name(&m.jid)?
+      };
+    }
+    Ok(())
+  }
+
+  /// Guarda os nossos jids (telefone e `@lid`), trocando os anteriores.
+  pub fn set_me(&mut self, jids: &[String]) -> Result<()> {
+    let tx = self.conn.transaction()?;
+    tx.execute("DELETE FROM me", [])?;
+    for jid in jids {
+      tx.execute("INSERT OR IGNORE INTO me (jid) VALUES (?1)", params![jid])?;
+    }
+    tx.commit()?;
+    Ok(())
+  }
+
+  pub fn is_me(&self, jid: &str) -> Result<bool> {
+    Ok(
+      self
+        .conn
+        .query_row("SELECT 1 FROM me WHERE jid = ?1", params![jid], |_| Ok(()))
+        .optional()?
+        .is_some(),
+    )
+  }
+
   /// Atualiza `last_msg_ts` só se `ts` for mais novo (preview fica com a mensagem mais nova).
   fn touch_chat(&self, chat_jid: &str, ts: i64, preview: Option<&str>) -> Result<()> {
     self.conn.execute(
@@ -98,7 +139,7 @@ impl Db {
     })?;
     let inserted = insert_row(&self.conn, msg)?;
     if inserted {
-      self.touch_chat(&msg.chat_jid, msg.ts, Some(&preview(msg)))?;
+      self.touch_chat(&msg.chat_jid, msg.ts, Some(&self.named_preview(msg)?))?;
       if !msg.from_me && !msg.is_read {
         self.conn.execute(
           "UPDATE chats SET unread_count = unread_count + 1 WHERE jid = ?1",
@@ -122,6 +163,8 @@ impl Db {
     msgs: &[Message],
     hidden_id: Option<&str>,
   ) -> Result<()> {
+    let newest = msgs.iter().max_by_key(|m| m.ts);
+    let newest_preview = newest.map(|m| self.named_preview(m)).transpose()?;
     let tx = self.conn.transaction()?;
     upsert_chat(&tx, meta)?;
     for m in msgs {
@@ -132,12 +175,11 @@ impl Db {
         )?;
       }
     }
-    let newest = msgs.iter().max_by_key(|m| m.ts);
     if let Some(ts) = newest.map(|m| m.ts).or(last_ts) {
       tx.execute(
         "UPDATE chats SET last_msg_ts = ?2, last_msg_preview = COALESCE(?3, last_msg_preview)
          WHERE jid = ?1 AND (last_msg_ts IS NULL OR last_msg_ts <= ?2)",
-        params![meta.jid, ts, newest.map(preview)],
+        params![meta.jid, ts, newest_preview],
       )?;
     }
     tx.commit()?;
@@ -305,16 +347,18 @@ impl Db {
   }
 
   pub fn get_message(&self, chat_jid: &str, id: &str) -> Result<Option<Message>> {
-    Ok(
-      self
-        .conn
-        .query_row(
-          &format!("{} WHERE m.chat_jid = ?1 AND m.id = ?2", msg_select()),
-          params![chat_jid, id],
-          message_from_row,
-        )
-        .optional()?,
-    )
+    let mut msg = self
+      .conn
+      .query_row(
+        &format!("{} WHERE m.chat_jid = ?1 AND m.id = ?2", msg_select()),
+        params![chat_jid, id],
+        message_from_row,
+      )
+      .optional()?;
+    if let Some(m) = &mut msg {
+      self.name_mentions(std::slice::from_mut(m))?;
+    }
+    Ok(msg)
   }
 
   /// Devolve `true` se a mensagem existe.
@@ -616,6 +660,7 @@ impl Db {
     let rows = stmt.query_map(params![chat_jid, before, limit], message_from_row)?;
     let mut msgs = rows.collect::<rusqlite::Result<Vec<_>>>()?;
     msgs.reverse();
+    self.name_mentions(&mut msgs)?;
     Ok(msgs)
   }
 
@@ -684,8 +729,8 @@ fn upsert_chat(conn: &Connection, meta: &ChatMeta) -> Result<()> {
 fn insert_row(conn: &Connection, m: &Message) -> Result<bool> {
   let n = conn.execute(
     "INSERT INTO messages
-       (id, chat_jid, sender_jid, from_me, ts, kind, body, quoted_id, status, is_read)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       (id, chat_jid, sender_jid, from_me, ts, kind, body, quoted_id, status, is_read, mentions)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
      ON CONFLICT(chat_jid, id) DO NOTHING",
     params![
       m.id,
@@ -698,6 +743,13 @@ fn insert_row(conn: &Connection, m: &Message) -> Result<bool> {
       m.quoted_id,
       m.status.map(MsgStatus::as_str),
       m.is_read,
+      (!m.mentions.is_empty()).then(|| {
+        m.mentions
+          .iter()
+          .map(|x| x.jid.as_str())
+          .collect::<Vec<_>>()
+          .join(" ")
+      }),
     ],
   )?;
   Ok(n == 1)
@@ -743,7 +795,7 @@ fn msg_select() -> String {
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
        m.status, m.is_read, {},
        md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds, md.file_name,
-       m.starred, m.pinned_until
+       m.starred, m.pinned_until, m.mentions
      FROM messages m
      LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
@@ -822,7 +874,27 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
     },
     starred: r.get(19)?,
     pinned: matches!(r.get::<_, Option<i64>>(20)?, Some(u) if u > now_ms()),
+    mentions: r
+      .get::<_, Option<String>>(21)?
+      .unwrap_or_default()
+      .split_whitespace()
+      .map(Mention::new)
+      .collect(),
   })
+}
+
+/// Troca cada `@usuário` marcado pelo `@Nome` dele.
+pub fn with_mention_names(text: &str, mentions: &[Mention]) -> String {
+  // Mais longos primeiro, para @123 não trocar o começo de @1234.
+  let mut sorted: Vec<&Mention> = mentions.iter().collect();
+  sorted.sort_by_key(|m| std::cmp::Reverse(jid_user(&m.jid).len()));
+  let mut out = text.to_string();
+  for m in sorted {
+    if let Some(name) = &m.name {
+      out = out.replace(&format!("@{}", jid_user(&m.jid)), &format!("@{name}"));
+    }
+  }
+  out
 }
 
 /// Texto curto para a lista de chats (e para a citação de uma resposta).

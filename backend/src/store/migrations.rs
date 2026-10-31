@@ -90,6 +90,10 @@ pub(super) const MIGRATIONS: &[&str] = &[
   // 9: mensagem guardada mas ainda não mostrada (a âncora da sincronização inicial, que
   // aparece no primeiro "carregar mensagens" e fica visível daí em diante).
   "ALTER TABLE messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;",
+  // 10: pessoas marcadas (jids separados por espaço) e os nossos próprios jids
+  // (telefone e `@lid`), para mostrar "@Você".
+  "ALTER TABLE messages ADD COLUMN mentions TEXT;
+   CREATE TABLE me (jid TEXT PRIMARY KEY);",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

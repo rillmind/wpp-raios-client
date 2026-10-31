@@ -388,6 +388,18 @@ code {
 .bubble__text--media {
   font-style: italic;
 }
+.mention {
+  color: var(--link);
+  font-weight: 600;
+}
+.bubble--out .mention {
+  color: var(--tick-read-out);
+}
+.mention--me {
+  padding: 0 0.15rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
 .bubble__meta {
   align-self: flex-end;
   display: flex;
