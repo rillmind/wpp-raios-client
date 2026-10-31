@@ -205,8 +205,12 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing) return
       const typing = document.activeElement?.classList.contains('composer__input') ?? false
-      if (replying) setReplyTo(null)
-      else if (typing) (document.activeElement as HTMLElement).blur()
+      if (replying) {
+        setReplyTo(null)
+        // Extensões de teclado (ex.: Vimium) tiram o foco da caixa no mesmo Esc, antes
+        // daqui: devolve o cursor, que é o que este primeiro Esc deve deixar.
+        setTimeout(() => document.querySelector<HTMLTextAreaElement>('.composer__input')?.focus(), 0)
+      } else if (typing) (document.activeElement as HTMLElement).blur()
       else closeChat()
     }
     window.addEventListener('keydown', onKey)
