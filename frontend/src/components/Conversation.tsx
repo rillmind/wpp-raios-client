@@ -136,7 +136,7 @@ export function Conversation({ chat, conv, connected, onBack, onLoadOlder, onMar
         ))}
       </div>
 
-      <Composer disabled={!connected} onSend={onSend} />
+      <Composer key={conv.jid} disabled={!connected} onSend={onSend} />
     </section>
   )
 }

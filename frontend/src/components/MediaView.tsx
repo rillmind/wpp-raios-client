@@ -89,10 +89,15 @@ function Download({ path, label, sticker, onRetry }: DownloadProps) {
 }
 
 function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  // Em captura e sem propagar: com a imagem ampliada, Esc só fecha a imagem (não a conversa).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   return (
     <div className="lightbox" role="dialog" aria-label="Imagem ampliada" onClick={onClose}>

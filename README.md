@@ -16,8 +16,11 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   WhatsApp quando você clica. Ficam só na memória da aba: nada vai para o disco nem para o banco
   (o banco guarda só a referência para baixar). Fechou a aba, sumiram. Figurinhas animadas
   vetoriais aparecem como `[figurinha]`, e imagens recebidas antes desta versão como `[imagem]`.
-- Abre a conversa na primeira mensagem não lida, com um separador.
-- Envia mensagens de texto (Enter envia, Shift+Enter quebra linha).
+- Abre a conversa na primeira mensagem não lida, com um separador, e com a caixa de mensagem já
+  selecionada (em telas de toque não, para não abrir o teclado). Esc fecha a conversa e volta à
+  tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
+- Envia mensagens de texto (Enter envia, Shift+Enter quebra linha). Cada conversa tem o seu
+  rascunho: trocar de conversa não leva o texto junto.
 - Marca como lida só quando você clica em "Marcar como lida", porque o contato vê o recibo; a
   opção "Ler ao abrir" faz isso automaticamente. Marcar aqui zera o contador no celular também.
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na

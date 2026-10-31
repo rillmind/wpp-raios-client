@@ -157,6 +157,22 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   const stream = useEvents(onEvent, onResync)
 
+  const closeChat = useCallback(() => {
+    selectedRef.current = null
+    setSelected(null)
+    setConv(null)
+  }, [])
+
+  // Esc dentro de uma conversa volta para a tela inicial (inclusive digitando).
+  useEffect(() => {
+    if (!selected) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.isComposing) closeChat()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, closeChat])
+
   function select(jid: string) {
     selectedRef.current = jid
     setSelected(jid)
@@ -240,11 +256,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             chat={chats.find((c) => c.jid === conv.jid)}
             conv={conv}
             connected={conn === 'connected' && stream === 'open'}
-            onBack={() => {
-              selectedRef.current = null
-              setSelected(null)
-              setConv(null)
-            }}
+            onBack={closeChat}
             onLoadOlder={loadOlder}
             onMarkRead={() => markRead(conv.jid)}
             onSend={send}

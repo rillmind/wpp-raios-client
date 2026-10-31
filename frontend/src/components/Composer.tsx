@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 interface Props {
   disabled: boolean
@@ -9,6 +9,13 @@ export function Composer({ disabled, onSend }: Props) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const input = useRef<HTMLTextAreaElement>(null)
+
+  // Ao abrir a conversa (o componente é montado por conversa), já deixa pronto para
+  // escrever. Em tela de toque não: abriria o teclado só para ler.
+  useEffect(() => {
+    if (!disabled && !window.matchMedia('(pointer: coarse)').matches) input.current?.focus()
+  }, [disabled])
 
   async function submit() {
     const value = text.trim()
@@ -48,6 +55,7 @@ export function Composer({ disabled, onSend }: Props) {
       )}
       <div className="composer__row">
         <textarea
+          ref={input}
           className="composer__input"
           rows={1}
           value={text}
