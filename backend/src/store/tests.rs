@@ -18,6 +18,8 @@ fn msg(chat: &str, id: &str, ts: i64, from_me: bool, is_read: bool) -> Message {
     status: from_me.then_some(MsgStatus::Sent),
     is_read,
     media: None,
+    starred: false,
+    pinned: false,
   }
 }
 
@@ -409,4 +411,41 @@ fn group_list_shows_who_sent_the_last_message() {
   // Conversa individual não tem remetente na prévia.
   db.insert_message(&msg(A, "3", 30, false, true)).unwrap();
   assert_eq!(db.get_chat(A).unwrap().unwrap().last_sender, None);
+}
+
+#[test]
+fn star_pin_revoke_and_delete_messages() {
+  let mut db = db();
+  db.insert_message(&msg(A, "1", 10, false, true)).unwrap();
+  db.insert_message(&msg(A, "2", 20, false, false)).unwrap();
+
+  assert!(db.set_starred(A, "1", true).unwrap());
+  let future = now_ms() + 60_000;
+  assert!(db.set_pinned_until(A, "1", Some(future)).unwrap());
+  let m = db.get_message(A, "1").unwrap().unwrap();
+  assert!(m.starred && m.pinned);
+  db.set_pinned_until(A, "1", Some(1)).unwrap();
+  assert!(
+    !db.get_message(A, "1").unwrap().unwrap().pinned,
+    "prazo vencido"
+  );
+
+  // Apagada para todos: some o conteúdo, a prévia vira o aviso.
+  assert!(db.revoke_message(A, "2").unwrap());
+  let m = db.get_message(A, "2").unwrap().unwrap();
+  assert_eq!((m.kind, m.body), (MessageKind::Revoked, None));
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_msg_preview.as_deref(),
+    Some("[mensagem apagada]")
+  );
+
+  // Apagada para mim: sai, a não lida sai do contador e a prévia volta à anterior.
+  db.insert_message(&msg(A, "3", 30, false, false)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().unread_count, 2);
+  assert!(db.delete_message(A, "3").unwrap());
+  assert!(db.get_message(A, "3").unwrap().is_none());
+  let chat = db.get_chat(A).unwrap().unwrap();
+  assert_eq!(chat.unread_count, 1);
+  assert_eq!(chat.last_msg_preview.as_deref(), Some("[mensagem apagada]"));
+  assert!(!db.delete_message(A, "nao-existe").unwrap());
 }

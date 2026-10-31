@@ -9,22 +9,27 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch, Semaphore};
+use whatsapp_rust::buffa;
 use whatsapp_rust::download::{DownloadParams, MediaType};
 use whatsapp_rust::http::HttpRequest;
 use whatsapp_rust::media::{DocumentOptions, ImageOptions, VideoOptions};
 use whatsapp_rust::prelude::*;
+use whatsapp_rust::send::{PinDuration, RevokeType};
 use whatsapp_rust::sync_task::MajorSyncTask;
 use whatsapp_rust::upload::UploadOptions;
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
+use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
 use whatsapp_rust::wacore::store::traits::AppSyncStore;
 use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
+use whatsapp_rust::wacore::types::spam_report::{SpamFlow, SpamReportRequest};
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
 use super::{qr, OutgoingMedia, Sent, UnreadRef, WaEvent, WhatsApp};
 use crate::model::{
-  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageKind, MsgStatus,
+  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageAction, MessageKind,
+  MsgStatus, Quote,
 };
 
 pub struct WaOptions {
@@ -91,6 +96,18 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
   }))
 }
 
+impl RustWa {
+  /// Nosso jid (o de telefone; o `@lid` se ainda não houver).
+  fn own_jid(&self) -> Result<Jid> {
+    self
+      .client
+      .pn()
+      .or_else(|| self.client.lid())
+      .map(|j| j.to_non_ad())
+      .ok_or_else(|| anyhow!("sessão sem jid próprio"))
+  }
+}
+
 #[async_trait]
 impl WhatsApp for RustWa {
   fn state(&self) -> ConnState {
@@ -104,13 +121,227 @@ impl WhatsApp for RustWa {
     self.qr.lock().ok().and_then(|q| q.clone())
   }
 
-  async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
+  async fn send_text(&self, chat_jid: &str, text: &str, quote: Option<&Quote>) -> Result<Sent> {
     let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let message = match quote {
+      None => wa::Message::text(text),
+      Some(q) => {
+        // A citação leva o texto da original (não guardamos a mensagem crua).
+        let sender = match (&q.sender_jid, q.from_me) {
+          (_, true) => self.own_jid()?,
+          (Some(s), false) => parse_jid(s)?,
+          (None, false) => jid.clone(),
+        };
+        let context =
+          build_quote_context_with_info(&q.id, &sender, &jid, &jid, &wa::Message::text(&q.text));
+        wa::Message::text_with_context(text, context)
+      }
+    };
     let sent = self
       .client
-      .send_message(jid, wa::Message::text(text))
+      .send_message(jid, message)
       .await
       .map_err(|e| anyhow!("falha ao enviar: {e}"))?;
+    Ok(Sent {
+      id: sent.message_id,
+      ts: now_secs(),
+    })
+  }
+
+  async fn message_action(&self, msg: &Message, action: MessageAction) -> Result<()> {
+    let chat = parse_jid(&msg.chat_jid)?;
+    // Em grupo, quem mandou identifica a mensagem; nas nossas e em conversa
+    // individual não vai participante.
+    let participant = if (chat.is_group() || chat.is_status_broadcast()) && !msg.from_me {
+      msg.sender_jid.as_deref().map(parse_jid).transpose()?
+    } else {
+      None
+    };
+    let key = wa::MessageKey {
+      remote_jid: Some(chat.to_string()),
+      from_me: Some(msg.from_me),
+      id: Some(msg.id.clone()),
+      participant: participant.as_ref().map(Jid::to_string),
+    };
+    let actions = self.client.chat_actions();
+    match action {
+      MessageAction::Star(true) => actions
+        .star_message(&chat, participant.as_ref(), &msg.id, msg.from_me)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Star(false) => actions
+        .unstar_message(&chat, participant.as_ref(), &msg.id, msg.from_me)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Pin(days) => {
+        let duration = match days {
+          1 => PinDuration::Hours24,
+          30 => PinDuration::Days30,
+          _ => PinDuration::Days7,
+        };
+        self
+          .client
+          .pin_message(chat, key, duration)
+          .await
+          .map_err(|e| anyhow!("{e}"))
+      }
+      MessageAction::Unpin => self
+        .client
+        .unpin_message(chat, key)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::DeleteForMe => actions
+        .delete_message_for_me(
+          &chat,
+          participant.as_ref(),
+          &msg.id,
+          msg.from_me,
+          true,
+          Some(msg.ts * 1000),
+        )
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::DeleteForAll => self
+        .client
+        .revoke_message(chat, msg.id.clone(), RevokeType::Sender)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Report => {
+        let sender = match &msg.sender_jid {
+          Some(s) => parse_jid(s)?,
+          None => chat.clone(),
+        };
+        let group = chat.is_group();
+        self
+          .client
+          .send_spam_report(SpamReportRequest {
+            message_id: msg.id.clone(),
+            message_timestamp: u64::try_from(msg.ts).unwrap_or(0),
+            from_jid: Some(if group { chat.clone() } else { sender.clone() }),
+            participant_jid: group.then_some(sender),
+            group_jid: group.then(|| chat.clone()),
+            spam_flow: SpamFlow::MessageMenu,
+            ..Default::default()
+          })
+          .await
+          .map(|_| ())
+          .map_err(|e| anyhow!("{e}"))
+      }
+    }
+  }
+
+  async fn forward(&self, to_jid: &str, msg: &Message, media: Option<&MediaRef>) -> Result<Sent> {
+    let to = parse_jid(to_jid)?;
+    let ctx = || {
+      buffa::MessageField::some(wa::ContextInfo {
+        is_forwarded: Some(true),
+        forwarding_score: Some(1),
+        ..Default::default()
+      })
+    };
+    let caption = msg.body.clone();
+    let message = match media {
+      // Mídia: reaproveita o arquivo que já está no CDN (mesmo caminho e chave).
+      Some(m) => match m.kind {
+        MessageKind::Image => wa::Message {
+          image_message: buffa::MessageField::some(wa::message::ImageMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            caption,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Video => wa::Message {
+          video_message: buffa::MessageField::some(wa::message::VideoMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            seconds: m.seconds,
+            caption,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Audio => wa::Message {
+          audio_message: buffa::MessageField::some(wa::message::AudioMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            seconds: m.seconds,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Sticker => wa::Message {
+          sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        _ => wa::Message {
+          document_message: buffa::MessageField::some(wa::message::DocumentMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            file_name: m.file_name.clone(),
+            title: m.file_name.clone(),
+            caption: caption.filter(|c| Some(c) != m.file_name.as_ref()),
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+      },
+      None => {
+        let text = msg
+          .body
+          .clone()
+          .ok_or_else(|| anyhow!("mensagem sem texto para encaminhar"))?;
+        wa::Message::text_with_context(
+          text,
+          wa::ContextInfo {
+            is_forwarded: Some(true),
+            forwarding_score: Some(1),
+            ..Default::default()
+          },
+        )
+      }
+    };
+    let sent = self
+      .client
+      .send_message(to, message)
+      .await
+      .map_err(|e| anyhow!("falha ao encaminhar: {e}"))?;
     Ok(Sent {
       id: sent.message_id,
       ts: now_secs(),
@@ -396,6 +627,11 @@ impl Translator {
       }
       Event::Messages(batch) => {
         for inbound in batch.iter() {
+          // Apagar para todos e fixar chegam como mensagens de controle.
+          if let Some(ev) = control_event(&inbound.message, &inbound.info) {
+            self.send(ev).await;
+            continue;
+          }
           if let Some((msg, media)) = convert_live(&inbound.message, &inbound.info) {
             let src = &inbound.info.source;
             self.ensure_group_name(client, &src.chat).await;
@@ -451,6 +687,8 @@ impl Translator {
               status: src.is_from_me.then_some(MsgStatus::Sent),
               is_read: src.is_from_me,
               media: None,
+              starred: false,
+              pinned: false,
             },
             media: None,
           })
@@ -509,6 +747,23 @@ impl Translator {
             muted_until: Some(until),
             ..Default::default()
           }))
+          .await
+      }
+      Event::StarUpdate(u) => {
+        self
+          .send(WaEvent::Starred {
+            chat_jid: u.chat_jid.to_non_ad_string(),
+            id: u.message_id.clone(),
+            starred: u.action.starred.unwrap_or(false),
+          })
+          .await
+      }
+      Event::DeleteMessageForMeUpdate(u) => {
+        self
+          .send(WaEvent::DeletedForMe {
+            chat_jid: u.chat_jid.to_non_ad_string(),
+            id: u.message_id.clone(),
+          })
           .await
       }
       Event::PinUpdate(u) => {
@@ -704,6 +959,44 @@ async fn chat_title(client: &Client, jid: &Jid) -> Result<Option<String>> {
   Ok(non_empty(&meta.subject))
 }
 
+/// Fixação padrão quando a mensagem não diz a duração (a do WhatsApp).
+const DEFAULT_PIN_SECS: i64 = 7 * 24 * 3600;
+
+/// Apagar para todos e fixar/desafixar mensagem.
+fn control_event(message: &wa::Message, info: &MessageInfo) -> Option<WaEvent> {
+  let m = message.get_base_message();
+  let chat_jid = info.source.chat.to_non_ad_string();
+  if let Some(p) = m.protocol_message.as_option() {
+    use wa::message::protocol_message::Type;
+    if p.r#type == Some(Type::REVOKE) {
+      let id = p.key.as_option()?.id.clone()?;
+      return Some(WaEvent::Revoked { chat_jid, id });
+    }
+    return None;
+  }
+  if let Some(pin) = m.pin_in_chat_message.as_option() {
+    use wa::message::pin_in_chat_message::Type;
+    let id = pin.key.as_option()?.id.clone()?;
+    let until_ms = match pin.r#type {
+      Some(Type::PIN_FOR_ALL) => {
+        let secs = message
+          .message_context_info
+          .as_option()
+          .and_then(|c| c.message_add_on_duration_in_secs)
+          .map_or(DEFAULT_PIN_SECS, i64::from);
+        Some((now_secs() + secs) * 1000)
+      }
+      _ => None,
+    };
+    return Some(WaEvent::Pinned {
+      chat_jid,
+      id,
+      until_ms,
+    });
+  }
+  None
+}
+
 fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, Option<MediaRef>)> {
   let Classified {
     kind,
@@ -726,6 +1019,8 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, O
     // Mensagens nossas (enviadas de outro aparelho) já nascem lidas.
     is_read: src.is_from_me,
     media: media.as_ref().map(MediaRef::info),
+    starred: false,
+    pinned: false,
   };
   Some((msg, media))
 }
@@ -917,6 +1212,8 @@ fn convert_history_msg(
     status,
     is_read: true,
     media: media.as_ref().map(MediaRef::info),
+    starred: false,
+    pinned: false,
   };
   Some((msg, media))
 }
@@ -1071,6 +1368,10 @@ fn has_visible_content(m: &wa::Message) -> bool {
     || m.poll_creation_message.is_set()
     || m.poll_creation_message_v3.is_set()
     || m.event_message.is_set()
+}
+
+fn parse_jid(s: &str) -> Result<Jid> {
+  s.parse().map_err(|e| anyhow!("jid inválido: {e}"))
 }
 
 fn non_empty(s: &str) -> Option<String> {

@@ -253,6 +253,101 @@ impl Db {
     Ok(changed)
   }
 
+  pub fn get_message(&self, chat_jid: &str, id: &str) -> Result<Option<Message>> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          &format!("{} WHERE m.chat_jid = ?1 AND m.id = ?2", msg_select()),
+          params![chat_jid, id],
+          message_from_row,
+        )
+        .optional()?,
+    )
+  }
+
+  /// Devolve `true` se a mensagem existe.
+  pub fn set_starred(&self, chat_jid: &str, id: &str, starred: bool) -> Result<bool> {
+    Ok(
+      self.conn.execute(
+        "UPDATE messages SET starred = ?3 WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id, starred],
+      )? > 0,
+    )
+  }
+
+  /// Fixada até `until_ms`; `None` desafixa.
+  pub fn set_pinned_until(&self, chat_jid: &str, id: &str, until_ms: Option<i64>) -> Result<bool> {
+    Ok(
+      self.conn.execute(
+        "UPDATE messages SET pinned_until = ?3 WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id, until_ms],
+      )? > 0,
+    )
+  }
+
+  /// Apagada para todos: some o conteúdo (e a mídia), fica o aviso.
+  pub fn revoke_message(&mut self, chat_jid: &str, id: &str) -> Result<bool> {
+    let tx = self.conn.transaction()?;
+    let n = tx.execute(
+      "UPDATE messages SET kind = 'revoked', body = NULL, quoted_id = NULL, starred = 0,
+         pinned_until = NULL
+       WHERE chat_jid = ?1 AND id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.execute(
+      "DELETE FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.commit()?;
+    if n > 0 {
+      self.refresh_preview(chat_jid)?;
+    }
+    Ok(n > 0)
+  }
+
+  /// Apagada só para nós: sai do banco (é o que a pessoa pediu).
+  pub fn delete_message(&mut self, chat_jid: &str, id: &str) -> Result<bool> {
+    let tx = self.conn.transaction()?;
+    let unread: bool = tx
+      .query_row(
+        "SELECT from_me = 0 AND is_read = 0 FROM messages WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id],
+        |r| r.get(0),
+      )
+      .optional()?
+      .unwrap_or(false);
+    let n = tx.execute(
+      "DELETE FROM messages WHERE chat_jid = ?1 AND id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.execute(
+      "DELETE FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+      params![chat_jid, id],
+    )?;
+    if unread {
+      tx.execute(
+        "UPDATE chats SET unread_count = MAX(unread_count - 1, 0) WHERE jid = ?1",
+        params![chat_jid],
+      )?;
+    }
+    tx.commit()?;
+    if n > 0 {
+      self.refresh_preview(chat_jid)?;
+    }
+    Ok(n > 0)
+  }
+
+  /// Refaz a prévia a partir da mensagem mais nova que sobrou.
+  fn refresh_preview(&self, chat_jid: &str) -> Result<()> {
+    let last = self.last_messages(chat_jid, 1, None)?.pop();
+    self.conn.execute(
+      "UPDATE chats SET last_msg_preview = ?2 WHERE jid = ?1",
+      params![chat_jid, last.as_ref().map(preview)],
+    )?;
+    Ok(())
+  }
+
   /// Guarda a referência de download da mídia de uma mensagem (não o arquivo).
   pub fn insert_media(&self, chat_jid: &str, msg_id: &str, m: &MediaRef) -> Result<()> {
     self.conn.execute(
@@ -596,7 +691,8 @@ fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
        m.status, m.is_read, {},
-       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds, md.file_name
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds, md.file_name,
+       m.starred, m.pinned_until
      FROM messages m
      LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
@@ -635,11 +731,14 @@ fn chat_from_row(r: &Row<'_>) -> rusqlite::Result<ChatSummary> {
 
 /// `muted_until`: -1 = para sempre; no futuro = silenciada.
 fn is_muted(until_ms: Option<i64>) -> bool {
-  let now_ms = std::time::SystemTime::now()
+  matches!(until_ms, Some(u) if u == -1 || u > now_ms())
+}
+
+fn now_ms() -> i64 {
+  std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis() as i64)
-    .unwrap_or(0);
-  matches!(until_ms, Some(u) if u == -1 || u > now_ms)
+    .unwrap_or(0)
 }
 
 fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
@@ -670,11 +769,13 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
     } else {
       None
     },
+    starred: r.get(19)?,
+    pinned: matches!(r.get::<_, Option<i64>>(20)?, Some(u) if u > now_ms()),
   })
 }
 
-/// Texto curto para a lista de chats.
-fn preview(msg: &Message) -> String {
+/// Texto curto para a lista de chats (e para a citação de uma resposta).
+pub fn preview(msg: &Message) -> String {
   let base = match (msg.kind, msg.body.as_deref()) {
     (MessageKind::Text, Some(b)) => b.to_string(),
     (kind, body) => {
@@ -685,6 +786,7 @@ fn preview(msg: &Message) -> String {
         MessageKind::Doc => "[documento]",
         MessageKind::Sticker => "[figurinha]",
         MessageKind::ViewOnce => "[visualização única]",
+        MessageKind::Revoked => "[mensagem apagada]",
         _ => "[mensagem]",
       };
       match body {

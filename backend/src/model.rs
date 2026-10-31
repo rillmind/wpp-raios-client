@@ -16,6 +16,8 @@ pub enum MessageKind {
   Sticker,
   /// Visualização única: o WhatsApp não entrega o conteúdo a aparelhos conectados.
   ViewOnce,
+  /// Apagada para todos por quem mandou.
+  Revoked,
   Other,
 }
 
@@ -29,6 +31,7 @@ impl MessageKind {
       Self::Doc => "doc",
       Self::Sticker => "sticker",
       Self::ViewOnce => "view_once",
+      Self::Revoked => "revoked",
       Self::Other => "other",
     }
   }
@@ -42,6 +45,7 @@ impl MessageKind {
       "doc" => Self::Doc,
       "sticker" => Self::Sticker,
       "view_once" => Self::ViewOnce,
+      "revoked" => Self::Revoked,
       _ => Self::Other,
     }
   }
@@ -105,6 +109,12 @@ pub struct Message {
   /// Imagem ou figurinha que pode ser baixada (`GET .../media`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub media: Option<MediaInfo>,
+  /// Favoritada (estrela).
+  #[serde(default)]
+  pub starred: bool,
+  /// Fixada na conversa (para todos), e ainda dentro do prazo.
+  #[serde(default)]
+  pub pinned: bool,
 }
 
 /// O que o front mostra antes de baixar a mídia (só baixa quando pedem).
@@ -174,6 +184,31 @@ pub struct ChatMeta {
   pub pinned: Option<bool>,
   /// Silenciada até (ms); `Some(-1)` = para sempre, `Some(0)` = não silenciada.
   pub muted_until: Option<i64>,
+}
+
+/// Mensagem citada numa resposta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+  pub id: String,
+  pub from_me: bool,
+  /// Quem mandou (obrigatório em grupo).
+  pub sender_jid: Option<String>,
+  /// Texto (ou "[imagem]" etc.) que aparece na citação para quem recebe.
+  pub text: String,
+}
+
+/// Ação numa mensagem pedida pela interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageAction {
+  Star(bool),
+  /// Fixar para todos por tantos dias (1, 7 ou 30).
+  Pin(u32),
+  Unpin,
+  DeleteForMe,
+  /// Apagar para todos (só as nossas).
+  DeleteForAll,
+  /// Denunciar ao WhatsApp (só as recebidas).
+  Report,
 }
 
 /// Ação na conversa pedida pela interface (sincroniza com o celular).

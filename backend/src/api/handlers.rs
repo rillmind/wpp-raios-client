@@ -14,7 +14,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use super::error::{ApiError, ApiResult};
 use super::{ApiEvent, AppState};
-use crate::model::{ChatAction, ConnState, Message, MessageKind, MsgStatus};
+use crate::model::{ChatAction, ConnState, Message, MessageAction, MessageKind, MsgStatus, Quote};
 use crate::store::ChatSummary;
 use crate::wa::{OutgoingMedia, UnreadRef};
 
@@ -234,6 +234,8 @@ fn now_ms() -> i64 {
 #[derive(Deserialize)]
 pub struct SendBody {
   text: String,
+  /// Id da mensagem desta conversa que está sendo respondida (citada).
+  reply_to: Option<String>,
 }
 
 pub async fn send(
@@ -257,6 +259,24 @@ pub async fn send(
       "texto acima de {MAX_TEXT_CHARS} caracteres"
     )));
   }
+  let quote = match body.reply_to.clone() {
+    None => None,
+    Some(id) => {
+      validate_msg_id(&id)?;
+      let j = jid.clone();
+      let quoted = st
+        .store
+        .run(move |db| db.get_message(&j, &id))
+        .await?
+        .ok_or(ApiError::NotFound)?;
+      Some(Quote {
+        text: crate::store::preview(&quoted),
+        id: quoted.id,
+        from_me: quoted.from_me,
+        sender_jid: quoted.sender_jid,
+      })
+    }
+  };
   ensure_connected(&st)?;
   if !st.limiter.try_acquire() {
     return Err(ApiError::RateLimited);
@@ -264,7 +284,7 @@ pub async fn send(
 
   let sent = st
     .wa
-    .send_text(&jid, text)
+    .send_text(&jid, text, quote.as_ref())
     .await
     .map_err(ApiError::Upstream)?;
   let msg = Message {
@@ -276,10 +296,12 @@ pub async fn send(
     ts: sent.ts,
     kind: MessageKind::Text,
     body: Some(text.to_string()),
-    quoted_id: None,
+    quoted_id: quote.map(|q| q.id),
     status: Some(MsgStatus::Sent),
     is_read: true,
     media: None,
+    starred: false,
+    pinned: false,
   };
   let m = msg.clone();
   let chat = st
@@ -418,6 +440,201 @@ fn media_type(mimetype: Option<&str>, kind: MessageKind) -> &'static str {
 }
 
 #[derive(Deserialize)]
+pub struct MessageActionBody {
+  /// `star`, `unstar`, `pin`, `unpin`, `delete_me`, `delete_all` ou `report`.
+  action: String,
+  /// Só para `pin`: 1, 7 ou 30 dias.
+  days: Option<u32>,
+}
+
+/// Até quando dá para apagar para todos (o WhatsApp aceita ~2,5 dias).
+const REVOKE_WINDOW_SECS: i64 = 60 * 3600;
+
+/// Favorita, fixa, apaga ou denuncia uma mensagem: no WhatsApp, depois no banco.
+pub async fn message_action(
+  State(st): State<AppState>,
+  Path((jid, id)): Path<(String, String)>,
+  Json(body): Json<MessageActionBody>,
+) -> ApiResult<Json<Option<Message>>> {
+  validate_jid(&jid)?;
+  validate_msg_id(&id)?;
+  let action = match (body.action.as_str(), body.days) {
+    ("star", _) => MessageAction::Star(true),
+    ("unstar", _) => MessageAction::Star(false),
+    ("pin", None) => MessageAction::Pin(7),
+    ("pin", Some(d @ (1 | 7 | 30))) => MessageAction::Pin(d),
+    ("pin", Some(_)) => return Err(ApiError::BadRequest("days deve ser 1, 7 ou 30".into())),
+    ("unpin", _) => MessageAction::Unpin,
+    ("delete_me", _) => MessageAction::DeleteForMe,
+    ("delete_all", _) => MessageAction::DeleteForAll,
+    ("report", _) => MessageAction::Report,
+    _ => return Err(ApiError::BadRequest("ação desconhecida".into())),
+  };
+  let (j, i) = (jid.clone(), id.clone());
+  let msg = st
+    .store
+    .run(move |db| db.get_message(&j, &i))
+    .await?
+    .ok_or(ApiError::NotFound)?;
+  match action {
+    MessageAction::DeleteForAll if !msg.from_me => {
+      return Err(ApiError::BadRequest(
+        "só dá para apagar para todos as suas mensagens".into(),
+      ));
+    }
+    MessageAction::DeleteForAll if now_ms() / 1000 - msg.ts > REVOKE_WINDOW_SECS => {
+      return Err(ApiError::BadRequest(
+        "passou do prazo para apagar para todos".into(),
+      ));
+    }
+    MessageAction::Report if msg.from_me => {
+      return Err(ApiError::BadRequest(
+        "não dá para denunciar a própria mensagem".into(),
+      ));
+    }
+    _ if msg.kind == MessageKind::Revoked && action != MessageAction::DeleteForMe => {
+      return Err(ApiError::BadRequest("mensagem apagada".into()));
+    }
+    _ => {}
+  }
+  ensure_connected(&st)?;
+  // Primeiro no WhatsApp: se falhar, o banco local continua igual ao celular.
+  st.wa
+    .message_action(&msg, action)
+    .await
+    .map_err(ApiError::Upstream)?;
+  let out = st
+    .store
+    .run(move |db| {
+      let events = match action {
+        MessageAction::Star(starred) => {
+          db.set_starred(&jid, &id, starred)?;
+          crate::ingest::message_changed(db, &jid, &id)?
+        }
+        MessageAction::Pin(days) => {
+          db.set_pinned_until(&jid, &id, Some(now_ms() + i64::from(days) * 86_400_000))?;
+          crate::ingest::message_changed(db, &jid, &id)?
+        }
+        MessageAction::Unpin => {
+          db.set_pinned_until(&jid, &id, None)?;
+          crate::ingest::message_changed(db, &jid, &id)?
+        }
+        MessageAction::DeleteForAll => {
+          db.revoke_message(&jid, &id)?;
+          crate::ingest::message_changed(db, &jid, &id)?
+        }
+        MessageAction::DeleteForMe => {
+          db.delete_message(&jid, &id)?;
+          let mut out = vec![ApiEvent::MessageDeleted {
+            chat_jid: jid.clone(),
+            id: id.clone(),
+          }];
+          out.extend(db.get_chat(&jid)?.map(ApiEvent::ChatUpdated));
+          out
+        }
+        MessageAction::Report => vec![],
+      };
+      Ok((db.get_message(&jid, &id)?, events))
+    })
+    .await?;
+  let (updated, events) = out;
+  for ev in events {
+    let _ = st.events.send(ev);
+  }
+  Ok(Json(updated))
+}
+
+#[derive(Deserialize)]
+pub struct ForwardBody {
+  /// Conversas de destino (até 5, como no WhatsApp).
+  to: Vec<String>,
+}
+
+const MAX_FORWARD_TARGETS: usize = 5;
+
+/// Encaminha a mensagem para outras conversas, sem subir a mídia de novo.
+pub async fn forward(
+  State(st): State<AppState>,
+  Path((jid, id)): Path<(String, String)>,
+  Json(body): Json<ForwardBody>,
+) -> ApiResult<Json<Vec<Message>>> {
+  validate_jid(&jid)?;
+  validate_msg_id(&id)?;
+  if body.to.is_empty() || body.to.len() > MAX_FORWARD_TARGETS {
+    return Err(ApiError::BadRequest(format!(
+      "escolha de 1 a {MAX_FORWARD_TARGETS} conversas"
+    )));
+  }
+  for to in &body.to {
+    validate_jid(to)?;
+    if is_read_only(to) {
+      return Err(ApiError::BadRequest(
+        "status e canais são só de leitura".into(),
+      ));
+    }
+  }
+  let (j, i) = (jid.clone(), id.clone());
+  let (msg, media) = st
+    .store
+    .run(move |db| Ok((db.get_message(&j, &i)?, db.get_media(&j, &i)?)))
+    .await?;
+  let msg = msg.ok_or(ApiError::NotFound)?;
+  if matches!(msg.kind, MessageKind::Revoked | MessageKind::ViewOnce)
+    || (media.is_none() && msg.kind != MessageKind::Text)
+  {
+    return Err(ApiError::BadRequest(
+      "essa mensagem não pode ser encaminhada".into(),
+    ));
+  }
+  ensure_connected(&st)?;
+
+  let mut sent_msgs = Vec::new();
+  for to in body.to {
+    if !st.limiter.try_acquire() {
+      return Err(ApiError::RateLimited);
+    }
+    let sent = st
+      .wa
+      .forward(&to, &msg, media.as_ref())
+      .await
+      .map_err(ApiError::Upstream)?;
+    let copy = Message {
+      id: sent.id,
+      chat_jid: to.clone(),
+      sender_jid: None,
+      sender_name: None,
+      from_me: true,
+      ts: sent.ts,
+      kind: msg.kind,
+      body: msg.body.clone(),
+      quoted_id: None,
+      status: Some(MsgStatus::Sent),
+      is_read: true,
+      media: msg.media.clone(),
+      starred: false,
+      pinned: false,
+    };
+    let (c, m) = (copy.clone(), media.clone());
+    let chat = st
+      .store
+      .run(move |db| {
+        if let Some(m) = &m {
+          db.insert_media(&c.chat_jid, &c.id, m)?;
+        }
+        db.insert_message(&c)?;
+        db.get_chat(&c.chat_jid)
+      })
+      .await?;
+    let _ = st.events.send(ApiEvent::MessageNew(copy.clone()));
+    if let Some(chat) = chat {
+      let _ = st.events.send(ApiEvent::ChatUpdated(chat));
+    }
+    sent_msgs.push(copy);
+  }
+  Ok(Json(sent_msgs))
+}
+
+#[derive(Deserialize)]
 pub struct SendMediaQuery {
   /// Nome do arquivo (documentos mostram e salvam com ele).
   name: Option<String>,
@@ -516,6 +733,8 @@ pub async fn send_media(
     status: Some(MsgStatus::Sent),
     is_read: true,
     media: Some(media.info()),
+    starred: false,
+    pinned: false,
   };
   let m = msg.clone();
   let chat = st

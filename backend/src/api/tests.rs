@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::*;
-use crate::model::{ChatAction, ConnState, MediaRef, Message, MessageKind};
+use crate::model::{ChatAction, ConnState, MediaRef, Message, MessageAction, MessageKind, Quote};
 use crate::store::Db;
 use crate::wa::{OutgoingMedia, Sent, UnreadRef};
 
@@ -26,6 +26,9 @@ struct FakeWa {
   offline: bool,
   actions: Mutex<Vec<(String, ChatAction)>>,
   uploads: Mutex<Vec<OutgoingMedia>>,
+  quotes: Mutex<Vec<Quote>>,
+  msg_actions: Mutex<Vec<(String, MessageAction)>>,
+  forwards: Mutex<Vec<(String, String)>>,
   /// Com QR: o "WhatsApp" está esperando o pareamento.
   qr: Option<String>,
 }
@@ -46,9 +49,12 @@ impl WhatsApp for FakeWa {
     self.qr.clone()
   }
 
-  async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
+  async fn send_text(&self, chat_jid: &str, text: &str, quote: Option<&Quote>) -> Result<Sent> {
     let mut sent = self.sent.lock().unwrap();
     sent.push((chat_jid.into(), text.into()));
+    if let Some(q) = quote {
+      self.quotes.lock().unwrap().push(q.clone());
+    }
     Ok(Sent {
       id: format!("out-{}", sent.len()),
       ts: 1_000,
@@ -78,6 +84,24 @@ impl WhatsApp for FakeWa {
       },
       r,
     ))
+  }
+
+  async fn message_action(&self, msg: &Message, action: MessageAction) -> Result<()> {
+    self
+      .msg_actions
+      .lock()
+      .unwrap()
+      .push((msg.id.clone(), action));
+    Ok(())
+  }
+
+  async fn forward(&self, to_jid: &str, msg: &Message, _media: Option<&MediaRef>) -> Result<Sent> {
+    let mut f = self.forwards.lock().unwrap();
+    f.push((to_jid.into(), msg.id.clone()));
+    Ok(Sent {
+      id: format!("fwd-{}", f.len()),
+      ts: 3_000,
+    })
   }
 
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
@@ -166,6 +190,8 @@ fn incoming(id: &str, ts: i64, is_read: bool) -> Message {
     status: None,
     is_read,
     media: None,
+    starred: false,
+    pinned: false,
   }
 }
 
@@ -850,4 +876,131 @@ async fn sent_document_is_downloaded_as_attachment() {
     resp.headers()[header::CONTENT_DISPOSITION],
     "attachment; filename*=UTF-8''rel%C3%A1t%C3%B3rio%20final.gif"
   );
+}
+
+async fn msg_act(h: &Harness, id: &str, body: Value) -> (StatusCode, Value) {
+  call(
+    h,
+    "POST",
+    &format!("/api/chats/{A}/messages/{id}/action"),
+    Some(body),
+  )
+  .await
+}
+
+#[tokio::test]
+async fn message_actions_star_pin_delete_and_report() {
+  let h = harness();
+  let now = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap()
+    .as_secs() as i64;
+  let mut mine = incoming("mine", now, true);
+  mine.from_me = true;
+  mine.sender_jid = None;
+  let mut old = incoming("old", now - 7 * 24 * 3600, true);
+  old.from_me = true;
+  seed(&h, vec![incoming("in", now, true), mine, old]).await;
+
+  let (status, m) = msg_act(&h, "in", json!({ "action": "star" })).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(m["starred"], true);
+  let (_, m) = msg_act(&h, "in", json!({ "action": "pin", "days": 1 })).await;
+  assert_eq!(m["pinned"], true);
+  let (_, m) = msg_act(&h, "in", json!({ "action": "unpin" })).await;
+  assert_eq!(m["pinned"], false);
+  let (status, _) = msg_act(&h, "in", json!({ "action": "pin", "days": 3 })).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+
+  // Apagar para todos: só as nossas e dentro do prazo.
+  let (status, _) = msg_act(&h, "in", json!({ "action": "delete_all" })).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (status, _) = msg_act(&h, "old", json!({ "action": "delete_all" })).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (_, m) = msg_act(&h, "mine", json!({ "action": "delete_all" })).await;
+  assert_eq!(m["kind"], "revoked");
+  assert!(m["body"].is_null());
+
+  // Denunciar: só as recebidas.
+  let (status, _) = msg_act(&h, "old", json!({ "action": "report" })).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (status, _) = msg_act(&h, "in", json!({ "action": "report" })).await;
+  assert_eq!(status, StatusCode::OK);
+
+  // Apagar para mim: sai da conversa.
+  let (status, m) = msg_act(&h, "in", json!({ "action": "delete_me" })).await;
+  assert_eq!(status, StatusCode::OK);
+  assert!(m.is_null());
+  let (_, page) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  let ids: Vec<&str> = page["messages"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|m| m["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(ids, vec!["old", "mine"]);
+
+  let sent: Vec<MessageAction> = h
+    .wa
+    .msg_actions
+    .lock()
+    .unwrap()
+    .iter()
+    .map(|(_, a)| *a)
+    .collect();
+  assert_eq!(
+    sent,
+    vec![
+      MessageAction::Star(true),
+      MessageAction::Pin(1),
+      MessageAction::Unpin,
+      MessageAction::DeleteForAll,
+      MessageAction::Report,
+      MessageAction::DeleteForMe,
+    ]
+  );
+}
+
+#[tokio::test]
+async fn reply_quotes_and_forward_copies() {
+  let h = harness();
+  let other = "222@s.whatsapp.net";
+  seed(&h, vec![incoming("orig", 10, true)]).await;
+
+  let (status, m) = call(
+    &h,
+    "POST",
+    &format!("/api/chats/{A}/send"),
+    Some(json!({ "text": "resposta", "reply_to": "orig" })),
+  )
+  .await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(m["quoted_id"], "orig");
+  let quote = h.wa.quotes.lock().unwrap()[0].clone();
+  assert_eq!(
+    (quote.id.as_str(), quote.text.as_str()),
+    ("orig", "oi orig")
+  );
+
+  let (status, sent) = call(
+    &h,
+    "POST",
+    &format!("/api/chats/{A}/messages/orig/forward"),
+    Some(json!({ "to": [other] })),
+  )
+  .await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(sent[0]["chat_jid"], other);
+  assert_eq!(sent[0]["body"], "oi orig");
+  let (_, page) = call(&h, "GET", &format!("/api/chats/{other}/messages"), None).await;
+  assert_eq!(page["messages"].as_array().unwrap().len(), 1);
+
+  let (status, _) = call(
+    &h,
+    "POST",
+    &format!("/api/chats/{A}/messages/orig/forward"),
+    Some(json!({ "to": ["status@broadcast"] })),
+  )
+  .await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
 }

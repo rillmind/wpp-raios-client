@@ -262,6 +262,59 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
         })
         .await?
     }
+    WaEvent::Revoked { chat_jid, id } => {
+      store
+        .run(move |db| {
+          if !db.revoke_message(&chat_jid, &id)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
+    WaEvent::DeletedForMe { chat_jid, id } => {
+      store
+        .run(move |db| {
+          if !db.delete_message(&chat_jid, &id)? {
+            return Ok(vec![]);
+          }
+          let mut out = vec![ApiEvent::MessageDeleted {
+            chat_jid: chat_jid.clone(),
+            id,
+          }];
+          out.extend(chat_updated(db, &chat_jid)?);
+          Ok(out)
+        })
+        .await?
+    }
+    WaEvent::Starred {
+      chat_jid,
+      id,
+      starred,
+    } => {
+      store
+        .run(move |db| {
+          if !db.set_starred(&chat_jid, &id, starred)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
+    WaEvent::Pinned {
+      chat_jid,
+      id,
+      until_ms,
+    } => {
+      store
+        .run(move |db| {
+          if !db.set_pinned_until(&chat_jid, &id, until_ms)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
     WaEvent::ChatMeta(meta) => {
       store
         .run(move |db| {
@@ -281,4 +334,15 @@ fn chat_updated(db: &crate::store::Db, jid: &str) -> Result<Vec<ApiEvent>> {
       .into_iter()
       .collect(),
   )
+}
+
+/// A mensagem mudou (estrela, fixação, apagada): manda a versão nova e o chat.
+pub fn message_changed(db: &crate::store::Db, chat_jid: &str, id: &str) -> Result<Vec<ApiEvent>> {
+  let mut out: Vec<ApiEvent> = db
+    .get_message(chat_jid, id)?
+    .map(ApiEvent::MessageUpdated)
+    .into_iter()
+    .collect();
+  out.extend(chat_updated(db, chat_jid)?);
+  Ok(out)
 }

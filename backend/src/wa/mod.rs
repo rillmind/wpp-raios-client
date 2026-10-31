@@ -9,7 +9,9 @@ mod whatsapp_rust_impl;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::model::{ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MsgStatus};
+use crate::model::{
+  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageAction, MsgStatus, Quote,
+};
 
 pub use qr::svg as qr_svg;
 pub use whatsapp_rust_impl::{start, WaOptions};
@@ -18,6 +20,28 @@ pub use whatsapp_rust_impl::{start, WaOptions};
 #[derive(Debug, Clone)]
 pub enum WaEvent {
   Connection(ConnState),
+  /// Mensagem apagada para todos por quem mandou.
+  Revoked {
+    chat_jid: String,
+    id: String,
+  },
+  /// Mensagem apagada para nós em outro aparelho.
+  DeletedForMe {
+    chat_jid: String,
+    id: String,
+  },
+  /// Estrela posta/tirada em outro aparelho.
+  Starred {
+    chat_jid: String,
+    id: String,
+    starred: bool,
+  },
+  /// Mensagem fixada (até `until_ms`) ou desafixada (`None`).
+  Pinned {
+    chat_jid: String,
+    id: String,
+    until_ms: Option<i64>,
+  },
   /// Mensagem nova (ao vivo ou entregue na reconexão), com a referência da mídia.
   Message {
     msg: Message,
@@ -93,8 +117,14 @@ pub trait WhatsApp: Send + Sync {
   /// Conteúdo do QR de pareamento atual, enquanto não há celular pareado.
   fn pairing_qr(&self) -> Option<String>;
 
-  /// Envia uma mensagem de texto.
-  async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent>;
+  /// Envia uma mensagem de texto, opcionalmente respondendo (citando) outra.
+  async fn send_text(&self, chat_jid: &str, text: &str, quote: Option<&Quote>) -> Result<Sent>;
+
+  /// Favorita, fixa, apaga ou denuncia uma mensagem (também no celular).
+  async fn message_action(&self, msg: &Message, action: MessageAction) -> Result<()>;
+
+  /// Encaminha uma mensagem (texto ou mídia, sem subir o arquivo de novo).
+  async fn forward(&self, to_jid: &str, msg: &Message, media: Option<&MediaRef>) -> Result<Sent>;
 
   /// Arquiva, fixa, silencia ou marca como não lida, também no celular.
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()>;
