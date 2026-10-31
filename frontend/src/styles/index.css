@@ -390,7 +390,7 @@ code {
   font-weight: 700;
 }
 .bubble--out .tick--read {
-  color: var(--ctp-base);
+  color: var(--tick-read-out);
 }
 
 .unread-sep {

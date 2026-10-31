@@ -42,6 +42,9 @@
   --bubble-in-fg: var(--ctp-text);
   --bubble-out: var(--ctp-mauve);
   --bubble-out-fg: var(--ctp-crust);
+  /* Tique azul de "lida" no balão enviado: o azul do Mocha some no lilás (1:1);
+     este é azul de verdade com 4,1:1 sobre --bubble-out. */
+  --tick-read-out: #1543b8;
   --accent: var(--ctp-mauve);
   --accent-fg: var(--ctp-crust);
   --unread: var(--ctp-lavender);
