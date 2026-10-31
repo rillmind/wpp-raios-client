@@ -552,6 +552,41 @@ impl Db {
     Ok(n > 0)
   }
 
+  /// Conversa individual com a pessoa (pelo `@lid` ou pelo telefone): a que já existe, por
+  /// qualquer um dos dois jids, ou uma ainda vazia (não gravada), de preferência pelo `@lid`,
+  /// que é como o WhatsApp entrega as conversas novas.
+  pub fn chat_for_person(&self, jid: &str) -> Result<ChatSummary> {
+    let mut lids: Vec<String> = Vec::new();
+    let pn: Option<String> = if jid.ends_with("@lid") {
+      lids.push(jid.to_string());
+      self
+        .conn
+        .query_row("SELECT pn FROM lid_map WHERE lid = ?1", params![jid], |r| {
+          r.get(0)
+        })
+        .optional()?
+    } else {
+      let mut stmt = self.conn.prepare("SELECT lid FROM lid_map WHERE pn = ?1")?;
+      for lid in stmt.query_map(params![jid], |r| r.get(0))? {
+        lids.push(lid?);
+      }
+      Some(jid.to_string())
+    };
+    for candidate in lids.iter().chain(pn.iter()) {
+      if let Some(chat) = self.get_chat(candidate)? {
+        return Ok(chat);
+      }
+    }
+    let target = lids.first().cloned().unwrap_or_else(|| jid.to_string());
+    let sql = CHAT_SELECT.replace(
+      "FROM chats c",
+      "FROM (SELECT ?1 AS jid, NULL AS name, 0 AS is_group, 0 AS unread_count,
+               NULL AS last_msg_ts, NULL AS last_msg_preview, 0 AS archived, 0 AS pinned,
+               NULL AS muted_until) c",
+    );
+    Ok(self.conn.query_row(&sql, params![target], chat_from_row)?)
+  }
+
   /// `@lid` (conversas individuais e remetentes em grupos) sem telefone conhecido.
   pub fn unmapped_lids(&self) -> Result<Vec<String>> {
     let mut stmt = self.conn.prepare(

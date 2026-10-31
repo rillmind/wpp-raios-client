@@ -42,6 +42,8 @@ interface Props {
   replyTo: Message | null
   onCancelReply: () => void
   onMessagePick: (m: Message, pick: MessagePick) => void
+  /** Abre a conversa com uma pessoa (remetente ou marcada). */
+  onOpenPerson: (jid: string) => void
 }
 
 /** Dentro disso o duplo clique é do próprio controle (mídia, citação, links). */
@@ -70,6 +72,7 @@ export function Conversation({
   replyTo,
   onCancelReply,
   onMessagePick,
+  onOpenPerson,
 }: Props) {
   const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null)
 
@@ -224,11 +227,22 @@ export function Conversation({
                   setMenu({ m, x: e.clientX, y: e.clientY })
                 }}
               >
-                {showSender && !m.from_me && (
-                <span className="bubble__sender" style={{ color: senderColor(m.sender_jid) }}>
-                  {senderName(m)}
-                </span>
-              )}
+                {showSender &&
+                  !m.from_me &&
+                  (m.sender_jid ? (
+                    <button
+                      type="button"
+                      className="bubble__sender bubble__sender--link"
+                      style={{ color: senderColor(m.sender_jid) }}
+                      title="Abrir conversa"
+                      onClick={() => onOpenPerson(m.sender_jid!)}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                    >
+                      {senderName(m)}
+                    </button>
+                  ) : (
+                    <span className="bubble__sender">{senderName(m)}</span>
+                  ))}
                 {m.quoted_id && (
                   <button type="button" className="quote" onClick={() => jumpTo(m.quoted_id!)}>
                     {byId.has(m.quoted_id) ? (
@@ -247,13 +261,13 @@ export function Conversation({
                     {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
                     {m.body && m.body !== m.media.file_name && (
                       <span className="bubble__text">
-                        <RichText text={m.body} mentions={m.mentions} />
+                        <RichText text={m.body} mentions={m.mentions} onMention={onOpenPerson} />
                       </span>
                     )}
                   </>
                 ) : (
                   <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} /> : messageText(m)}
+                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} onMention={onOpenPerson} /> : messageText(m)}
                   </span>
                 )}
                 <span className="bubble__meta">

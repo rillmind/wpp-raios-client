@@ -395,6 +395,27 @@ code {
 .bubble--out .mention {
   color: var(--tick-read-out);
 }
+.mention--link,
+.bubble__sender--link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.mention--link {
+  font-weight: 600;
+}
+.bubble__sender--link {
+  align-self: flex-start;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.mention--link:hover,
+.bubble__sender--link:hover {
+  text-decoration: underline;
+}
 .mention--me {
   padding: 0 0.15rem;
   border-radius: 4px;

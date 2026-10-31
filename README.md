@@ -18,7 +18,9 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem, cada pessoa numa cor (as 14 cores de destaque do Catppuccin, sorteadas ao abrir a
   conversa; uma cor só se repete com mais de 14 pessoas). As marcações (`@`) aparecem com o nome
-  da pessoa, destacadas, e com fundo quando quem foi marcado é você.
+  da pessoa, destacadas, e com fundo quando quem foi marcado é você. Clicar no nome de quem
+  mandou ou numa marcação abre a conversa com a pessoa; se ainda não houver, abre uma vazia, que
+  entra na lista na primeira mensagem.
 - Mostra as fotos de perfil, que carregam sozinhas.
 - Imagens, figurinhas, vídeos, áudios e documentos aparecem como um botão com o tamanho do
   arquivo (e a duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem

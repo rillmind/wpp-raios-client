@@ -69,6 +69,7 @@ pub fn router(
       "/api/chats/{jid}/messages/{id}/forward",
       post(handlers::forward),
     )
+    .route("/api/people/{jid}/chat", get(handlers::person_chat))
     .route("/api/events", get(handlers::events))
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
     // Fora da autenticação: só diz que o processo responde (healthcheck do container).

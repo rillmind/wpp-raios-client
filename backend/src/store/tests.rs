@@ -524,3 +524,32 @@ fn mentions_get_names_in_messages_and_preview() {
     Some("oi @Bia e @Você")
   );
 }
+
+#[test]
+fn chat_for_person_finds_existing_chat_by_lid_or_phone() {
+  const LID: &str = "77@lid";
+  const PN: &str = "5511999998888@s.whatsapp.net";
+  let db = db();
+  db.set_lid_map(LID, PN).unwrap();
+  db.upsert_contact(&Contact {
+    jid: PN.into(),
+    contact_name: Some("Caio".into()),
+    push_name: None,
+  })
+  .unwrap();
+
+  // Sem conversa: uma vazia, pelo @lid, com nome e telefone.
+  let chat = db.chat_for_person(PN).unwrap();
+  assert_eq!(chat.jid, LID);
+  assert_eq!(chat.name.as_deref(), Some("Caio"));
+  assert_eq!(chat.phone.as_deref(), Some("5511999998888"));
+  assert!(chat.last_msg_ts.is_none());
+  assert!(db.get_chat(LID).unwrap().is_none());
+
+  // Conversa existente pelo telefone: é ela, mesmo pedindo pelo @lid.
+  db.insert_message(&msg(PN, "1", 100, false, false)).unwrap();
+  assert_eq!(db.chat_for_person(LID).unwrap().jid, PN);
+
+  // Sem nada conhecido: o próprio jid.
+  assert_eq!(db.chat_for_person("88@lid").unwrap().jid, "88@lid");
+}

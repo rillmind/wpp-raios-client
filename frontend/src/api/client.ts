@@ -87,6 +87,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(before != null ? { before } : {}),
     }),
+  /** Conversa individual com uma pessoa: a que já existe ou uma vazia (ainda fora da lista). */
+  personChat: (jid: string) => request<Chat>(`/api/people/${enc(jid)}/chat`),
   markRead: (jid: string) => request<Chat>(`/api/chats/${enc(jid)}/read`, { method: 'POST' }),
   /** Arquiva, fixa, silencia (por `hours`, ou para sempre) ou marca como não lida. */
   action: (jid: string, action: string, hours?: number) =>

@@ -87,6 +87,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [section, setSection] = useState<Section>('chats')
   const [menu, setMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Conversa aberta que ainda não está na lista (sem mensagens); entra na primeira.
+  const [draftChat, setDraftChat] = useState<Chat | null>(null)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [forwarding, setForwarding] = useState<Message | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -297,6 +299,17 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     void openChat(jid)
     const chat = chats.find((c) => c.jid === jid)
     if (autoRead && chat && chat.unread_count > 0 && conn === 'connected') void markRead(jid)
+  }
+
+  /** Abre a conversa com uma pessoa (clicada num grupo), mesmo que ainda não exista. */
+  async function openPerson(jid: string) {
+    try {
+      const chat = await api.personChat(jid)
+      if (!chats.some((c) => c.jid === chat.jid)) setDraftChat(chat)
+      select(chat.jid)
+    } catch (e) {
+      setNotice(fail(e))
+    }
   }
 
   async function loadOlder() {
@@ -519,7 +532,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       <main className="main">
         {conv ? (
           <Conversation
-            chat={chats.find((c) => c.jid === conv.jid)}
+            chat={chats.find((c) => c.jid === conv.jid) ?? (draftChat?.jid === conv.jid ? draftChat : undefined)}
             conv={conv}
             connected={conn === 'connected' && stream === 'open'}
             onBack={closeChat}
@@ -530,6 +543,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             replyTo={replyTo?.chat_jid === conv.jid ? replyTo : null}
             onCancelReply={() => setReplyTo(null)}
             onMessagePick={messagePick}
+            onOpenPerson={(jid) => void openPerson(jid)}
           />
         ) : conn === 'waiting_qr' ? (
           <MainPairing />

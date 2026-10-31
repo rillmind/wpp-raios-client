@@ -239,6 +239,21 @@ pub async fn mark_read(
   Ok(Json(chat))
 }
 
+/// Conversa individual com uma pessoa (remetente ou marcada num grupo): a que já existe
+/// ou uma vazia, que passa a existir na primeira mensagem.
+pub async fn person_chat(
+  State(st): State<AppState>,
+  Path(jid): Path<String>,
+) -> ApiResult<Json<ChatSummary>> {
+  validate_jid(&jid)?;
+  if !(jid.ends_with("@lid") || jid.ends_with("@s.whatsapp.net")) {
+    return Err(ApiError::BadRequest("não é uma pessoa".into()));
+  }
+  Ok(Json(
+    st.store.run(move |db| db.chat_for_person(&jid)).await?,
+  ))
+}
+
 #[derive(Deserialize)]
 pub struct ActionBody {
   /// `archive`, `unarchive`, `pin`, `unpin`, `mute`, `unmute` ou `unread`.
