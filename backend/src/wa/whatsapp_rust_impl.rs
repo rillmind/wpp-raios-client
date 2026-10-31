@@ -16,7 +16,7 @@ use whatsapp_rust::sync_task::MajorSyncTask;
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
 use whatsapp_rust::wacore::store::traits::AppSyncStore;
-use whatsapp_rust::wacore::types::events::LazyHistorySync;
+use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
@@ -331,6 +331,30 @@ impl Translator {
               .await;
           }
         }
+      }
+      // Visualização única chega a aparelhos conectados só como aviso, sem conteúdo
+      // (nem chave de mídia): registra a mensagem para a conversa mostrar o aviso.
+      Event::UndecryptableMessage(u) if u.unavailable_type == UnavailableType::ViewOnce => {
+        let src = &u.info.source;
+        self
+          .send(WaEvent::Message {
+            msg: Message {
+              id: u.info.id.to_string(),
+              chat_jid: src.chat.to_non_ad_string(),
+              sender_jid: Some(src.sender.to_non_ad_string()),
+              sender_name: None,
+              from_me: src.is_from_me,
+              ts: u.info.timestamp.timestamp(),
+              kind: MessageKind::ViewOnce,
+              body: None,
+              quoted_id: None,
+              status: src.is_from_me.then_some(MsgStatus::Sent),
+              is_read: src.is_from_me,
+              media: None,
+            },
+            media: None,
+          })
+          .await;
       }
       Event::Receipt(r) => {
         let ids: Vec<String> = r.message_ids.iter().map(|id| id.to_string()).collect();

@@ -31,6 +31,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
   sincronização inicial). O histórico antigo continua no celular.
 - Áudio, vídeo e documentos aparecem como `[áudio]`, `[vídeo]`, `[documento]`.
+- Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
+  entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 
 ## Por que existe
 

@@ -6,6 +6,8 @@ const PLACEHOLDER: Record<string, string> = {
   video: '[vídeo]',
   doc: '[documento]',
   sticker: '[figurinha]',
+  // O WhatsApp não entrega o conteúdo a aparelhos conectados.
+  view_once: '📷 Visualização única — abra no celular',
   other: '[mensagem]',
 }
 

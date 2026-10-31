@@ -614,6 +614,7 @@ fn preview(msg: &Message) -> String {
         MessageKind::Video => "[vídeo]",
         MessageKind::Doc => "[documento]",
         MessageKind::Sticker => "[figurinha]",
+        MessageKind::ViewOnce => "[visualização única]",
         _ => "[mensagem]",
       };
       match body {

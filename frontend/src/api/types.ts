@@ -1,4 +1,4 @@
-export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'other'
+export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'view_once' | 'other'
 export type MsgStatus = 'sent' | 'delivered' | 'read'
 export type ConnState = 'connecting' | 'waiting_qr' | 'connected' | 'disconnected' | 'logged_out'
 
