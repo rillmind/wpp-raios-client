@@ -29,6 +29,7 @@ struct FakeWa {
   quotes: Mutex<Vec<Quote>>,
   msg_actions: Mutex<Vec<(String, MessageAction)>>,
   forwards: Mutex<Vec<(String, String)>>,
+  history_requests: Mutex<Vec<(String, u32)>>,
   /// Com QR: o "WhatsApp" está esperando o pareamento.
   qr: Option<String>,
 }
@@ -102,6 +103,15 @@ impl WhatsApp for FakeWa {
       id: format!("fwd-{}", f.len()),
       ts: 3_000,
     })
+  }
+
+  async fn request_history(&self, anchor: &Message, count: u32) -> Result<()> {
+    self
+      .history_requests
+      .lock()
+      .unwrap()
+      .push((anchor.id.clone(), count));
+    Ok(())
   }
 
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
@@ -359,7 +369,8 @@ async fn messages_include_all_unread_and_marker() {
   )
   .await;
   assert_eq!(oldest["messages"].as_array().unwrap().len(), 1);
-  assert_eq!(oldest["has_more"], false);
+  // Acabou o que está guardado, mas o celular ainda pode ter mais antigas.
+  assert_eq!(oldest["has_more"], true);
 }
 
 #[tokio::test]
@@ -1007,4 +1018,111 @@ async fn reply_quotes_and_forward_copies() {
   )
   .await;
   assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn first_sync_opens_empty_then_loaded_messages_stay() {
+  let h = harness();
+  // Sincronização inicial: só a âncora (lida), guardada sem aparecer.
+  crate::ingest::apply(
+    &h.store,
+    crate::wa::WaEvent::HistoryChat {
+      meta: crate::model::ChatMeta {
+        jid: A.into(),
+        ..Default::default()
+      },
+      last_ts: Some(10),
+      messages: vec![incoming("ancora", 10, true)],
+      media: vec![],
+      on_demand: false,
+      hidden_id: Some("ancora".into()),
+    },
+  )
+  .await
+  .unwrap();
+  let (_, page) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  assert!(
+    page["messages"].as_array().unwrap().is_empty(),
+    "abre vazia"
+  );
+  assert_eq!(page["has_more"], true, "dá para carregar");
+
+  // "Carregar mensagens": mostra a âncora e pede o resto ao celular a partir dela.
+  let (_, out) = call(
+    &h,
+    "POST",
+    &format!("/api/chats/{A}/load-older"),
+    Some(json!({})),
+  )
+  .await;
+  assert_eq!(out["messages"].as_array().unwrap().len(), 1);
+  assert_eq!(out["requested"], true);
+  assert_eq!(
+    h.wa.history_requests.lock().unwrap()[0],
+    ("ancora".to_string(), 19)
+  );
+
+  // Chegam as antigas do celular, já lidas, sem mexer no contador nem na prévia.
+  let out = crate::ingest::apply(
+    &h.store,
+    crate::wa::WaEvent::HistoryChat {
+      meta: crate::model::ChatMeta {
+        jid: A.into(),
+        ..Default::default()
+      },
+      last_ts: None,
+      messages: vec![incoming("velha", 5, true)],
+      media: vec![],
+      on_demand: true,
+      hidden_id: None,
+    },
+  )
+  .await
+  .unwrap();
+  assert!(out
+    .iter()
+    .any(|e| matches!(e, ApiEvent::HistoryLoaded { count: 1, .. })));
+  let (_, chats) = call(&h, "GET", "/api/chats", None).await;
+  assert_eq!(chats[0]["unread_count"], 0);
+  assert_eq!(chats[0]["last_msg_preview"], "oi ancora");
+
+  // Reabrindo a conversa: o que já foi carregado continua lá.
+  let (_, page) = call(&h, "GET", &format!("/api/chats/{A}/messages"), None).await;
+  let ids: Vec<&str> = page["messages"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|m| m["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(ids, vec!["velha", "ancora"]);
+}
+
+#[tokio::test]
+async fn load_older_uses_stored_messages_first() {
+  let h = harness();
+  seed(
+    &h,
+    vec![
+      incoming("1", 10, true),
+      incoming("2", 20, true),
+      incoming("3", 30, false),
+    ],
+  )
+  .await;
+  // Antes da não lida há 2 guardadas; pedindo 20, o resto (18) vai ao celular,
+  // a partir da mais antiga.
+  let (status, out) = call(
+    &h,
+    "POST",
+    &format!("/api/chats/{A}/load-older"),
+    Some(json!({ "before": 30 })),
+  )
+  .await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(out["messages"].as_array().unwrap().len(), 2);
+  assert_eq!(out["requested"], true);
+  assert_eq!(
+    h.wa.history_requests.lock().unwrap()[0],
+    ("1".to_string(), 18)
+  );
 }

@@ -76,4 +76,5 @@ export type ServerEvent =
   | { type: 'message.updated'; data: Message }
   | { type: 'message.deleted'; data: { chat_jid: string; id: string } }
   | { type: 'chat.updated'; data: Chat }
+  | { type: 'history.loaded'; data: { chat_jid: string; count: number } }
   | { type: 'connection.state'; data: { state: ConnState } }

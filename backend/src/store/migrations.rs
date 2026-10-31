@@ -87,6 +87,9 @@ pub(super) const MIGRATIONS: &[&str] = &[
   // 8: estrela e fixação (ms até quando) por mensagem.
   "ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE messages ADD COLUMN pinned_until INTEGER;",
+  // 9: mensagem guardada mas ainda não mostrada (a âncora da sincronização inicial, que
+  // aparece no primeiro "carregar mensagens" e fica visível daí em diante).
+  "ALTER TABLE messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

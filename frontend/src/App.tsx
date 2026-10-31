@@ -8,7 +8,7 @@ import type { FileMeta } from './components/Composer'
 import { Confirm, type ConfirmRequest } from './components/Dialog'
 import { ForwardDialog } from './components/ForwardDialog'
 import type { MessagePick } from './components/MessageMenu'
-import { copyText, securityCode } from './components/format'
+import { copyText, securityCode, shuffledPalette } from './components/format'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -18,6 +18,15 @@ import { Rail } from './components/Rail'
 
 // Marcada: abrir a conversa não envia recibo de leitura. Desmarcada (padrão): envia.
 const NO_READ_KEY = 'wpp.noRead'
+/** Quanto esperar o celular mandar as mensagens antigas. */
+const HISTORY_TIMEOUT_MS = 30_000
+
+/** Junta mensagens antigas às da tela, sem repetir e em ordem. */
+function withOlder(c: ConvState, older: Message[]): ConvState {
+  const known = new Set(c.messages.map((m) => m.id))
+  const fresh = older.filter((m) => !known.has(m.id))
+  return { ...c, messages: [...fresh, ...c.messages].sort((a, b) => a.ts - b.ts) }
+}
 const STATUS_JID = 'status@broadcast'
 
 function loadNoRead(): boolean {
@@ -84,9 +93,13 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [noRead, setNoRead] = useState(loadNoRead)
   const autoRead = !noRead
   const selectedRef = useRef(selected)
+  const convRef = useRef<ConvState | null>(null)
   useLayoutEffect(() => {
     selectedRef.current = selected
   }, [selected])
+  useLayoutEffect(() => {
+    convRef.current = conv
+  }, [conv])
 
   const fail = useCallback(
     (e: unknown) => {
@@ -102,8 +115,19 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
 
   const openChat = useCallback(
     async (jid: string) => {
-      setConv({ jid, messages: [], firstUnreadId: null, hasMore: false, loading: true, error: null })
+      const palette = shuffledPalette()
+      setConv({
+        jid,
+        messages: [],
+        firstUnreadId: null,
+        hasMore: false,
+        loading: true,
+        error: null,
+        pending: false,
+        palette,
+      })
       try {
+        // Abre com o que está guardado e visível: na primeira vez, só as não lidas.
         const page = await api.messages(jid)
         if (selectedRef.current !== jid) return
         setConv({
@@ -113,6 +137,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
           hasMore: page.has_more,
           loading: false,
           error: null,
+          pending: false,
+          palette,
         })
       } catch (e) {
         const error = fail(e)
@@ -129,6 +155,25 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       try {
         const chat = await api.markRead(jid)
         setChats((cs) => cs.map((c) => (c.jid === jid ? chat : c)))
+      } catch (e) {
+        fail(e)
+      }
+    },
+    [fail],
+  )
+
+  // Chegaram as mensagens antigas pedidas ao celular: busca as que ficaram antes da tela.
+  const onHistoryLoaded = useCallback(
+    async (chatJid: string, count: number) => {
+      if (selectedRef.current !== chatJid) return
+      try {
+        const before = convRef.current?.jid === chatJid ? convRef.current.messages[0]?.ts : undefined
+        const page = await api.messages(chatJid, { before, limit: 50 })
+        setConv((c) =>
+          c?.jid === chatJid
+            ? { ...withOlder(c, page.messages), pending: false, hasMore: count > 0 && c.hasMore }
+            : c,
+        )
       } catch (e) {
         fail(e)
       }
@@ -156,6 +201,9 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
           }
           break
         }
+        case 'history.loaded':
+          void onHistoryLoaded(ev.data.chat_jid, ev.data.count)
+          break
         case 'message.updated': {
           const m = ev.data
           setConv((c) =>
@@ -180,7 +228,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
         }
       }
     },
-    [autoRead, markRead],
+    [autoRead, markRead, onHistoryLoaded],
   )
 
   const onResync = useCallback(() => {
@@ -252,23 +300,35 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   }
 
   async function loadOlder() {
-    if (!conv || conv.messages.length === 0) return
+    if (!conv || conv.pending) return
     const jid = conv.jid
     try {
-      const page = await api.messages(jid, conv.messages[0].ts)
+      const out = await api.loadOlder(jid, conv.messages[0]?.ts)
       setConv((c) =>
         c?.jid === jid
           ? {
-              ...c,
-              messages: [...page.messages.filter((m) => !c.messages.some((x) => x.id === m.id)), ...c.messages],
-              hasMore: page.has_more,
+              ...withOlder(c, out.messages),
+              pending: out.requested,
+              // Nada guardado e nada a pedir: chegou ao começo.
+              hasMore: out.requested || out.messages.length > 0,
             }
           : c,
       )
+      if (out.requested) {
+        // Celular desligado ou sem rede: não espera para sempre.
+        setTimeout(() => {
+          const c = convRef.current
+          if (c?.jid !== jid || !c.pending) return
+          setNotice('O celular não respondeu. Tente de novo com ele ligado e com internet.')
+          setConv((cur) => (cur?.jid === jid ? { ...cur, pending: false } : cur))
+        }, HISTORY_TIMEOUT_MS)
+      }
     } catch (e) {
-      fail(e)
+      setNotice(fail(e))
     }
   }
+
+
 
   /** Aplica a versão nova da mensagem (ou a remove) na conversa aberta. */
   function applyMessage(chatJid: string, id: string, updated: Message | null) {

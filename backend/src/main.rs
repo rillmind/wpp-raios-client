@@ -36,7 +36,6 @@ async fn main() -> Result<()> {
   let whatsapp = wa::start(
     wa::WaOptions {
       session_db: config.session_db(),
-      history_msgs_per_chat: config.history_msgs_per_chat,
     },
     tx.clone(),
   )

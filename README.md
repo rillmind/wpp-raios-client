@@ -16,7 +16,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   canais são só de leitura: daqui não dá para postar um status nem escrever num canal.
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
-  mensagem.
+  mensagem, cada pessoa numa cor (as 14 cores de destaque do Catppuccin, sorteadas ao abrir a
+  conversa; uma cor só se repete com mais de 14 pessoas).
 - Mostra as fotos de perfil, que carregam sozinhas.
 - Imagens, figurinhas, vídeos, áudios e documentos aparecem como um botão com o tamanho do
   arquivo (e a duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem
@@ -52,8 +53,11 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
   abrir não marca nada: só o botão "Marcar como lida" faz isso.
-- Guarda só o que chega a partir do pareamento (e as últimas mensagens de cada conversa na
-  sincronização inicial). O histórico antigo continua no celular.
+- Guarda o que chega a partir do pareamento, e tudo o que já foi carregado fica guardado. Na
+  primeira vez, cada conversa mostra só as mensagens não lidas; sem nenhuma, abre vazia com o
+  botão "Carregar mensagens". O botão mostra as 20 anteriores, pedindo ao celular o que não
+  estiver guardado (o celular precisa estar ligado e com internet; chegam em alguns segundos), e
+  cada clique traz mais 20. O que foi carregado continua aparecendo nas próximas vezes.
 - Mensagens de visualização única aparecem como um aviso para abrir no celular: o WhatsApp não
   entrega o conteúdo delas a aparelhos conectados (o mesmo acontece no WhatsApp Web).
 
@@ -147,6 +151,5 @@ sobrescrevem:
 | `front_origin` | `WPP_FRONT_ORIGIN` | `http://127.0.0.1:5173` | origem aceita no CORS (dev) |
 | `front_dir` | `WPP_FRONT_DIR` | — | serve o build da interface na mesma porta |
 | `send_per_sec` | — | `2` | limite de envios por segundo |
-| `history_msgs_per_chat` | — | `50` | mensagens por conversa guardadas da sincronização inicial |
 
 Backup, troca de número, API e CI: [`docs/OPERACAO.md`](docs/OPERACAO.md).

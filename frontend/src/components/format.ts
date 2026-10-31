@@ -120,3 +120,31 @@ export async function copyText(text: string): Promise<void> {
   area.remove()
   if (!ok) throw new Error('Não foi possível copiar')
 }
+
+/** Cores de destaque do Catppuccin Mocha para os nomes em grupos. */
+export const SENDER_COLORS = [
+  'rosewater',
+  'flamingo',
+  'pink',
+  'mauve',
+  'red',
+  'maroon',
+  'peach',
+  'yellow',
+  'green',
+  'teal',
+  'sky',
+  'sapphire',
+  'blue',
+  'lavender',
+]
+
+/** As cores em ordem aleatória: cada abertura da conversa sorteia de novo. */
+export function shuffledPalette(): number[] {
+  const order = SENDER_COLORS.map((_, i) => i)
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order
+}

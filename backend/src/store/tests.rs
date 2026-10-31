@@ -175,8 +175,10 @@ fn history_import_uses_server_unread_count() {
     msg(A, "1", 100, false, true),
     msg(A, "2", 200, false, false),
   ];
-  db.import_history_chat(&meta, Some(150), &msgs).unwrap();
-  db.import_history_chat(&meta, Some(150), &msgs).unwrap();
+  db.import_history_chat(&meta, Some(150), &msgs, None)
+    .unwrap();
+  db.import_history_chat(&meta, Some(150), &msgs, None)
+    .unwrap();
   let chat = db.get_chat(A).unwrap().unwrap();
   assert_eq!(chat.unread_count, 1);
   assert_eq!(chat.last_msg_ts, Some(200));
@@ -448,4 +450,35 @@ fn star_pin_revoke_and_delete_messages() {
   assert_eq!(chat.unread_count, 1);
   assert_eq!(chat.last_msg_preview.as_deref(), Some("[mensagem apagada]"));
   assert!(!db.delete_message(A, "nao-existe").unwrap());
+}
+
+#[test]
+fn hidden_anchor_shows_only_after_reveal_and_never_hides_a_visible_one() {
+  let mut db = db();
+  let meta = ChatMeta {
+    jid: A.into(),
+    ..Default::default()
+  };
+  // Âncora nova: fica guardada, mas não aparece.
+  db.import_history_chat(
+    &meta,
+    None,
+    &[msg(A, "ancora", 10, false, true)],
+    Some("ancora"),
+  )
+  .unwrap();
+  assert!(db.last_messages(A, 10, None).unwrap().is_empty());
+  assert_eq!(db.oldest_message(A).unwrap().unwrap().id, "ancora");
+  assert_eq!(db.reveal_hidden(A).unwrap(), 1);
+  assert_eq!(db.last_messages(A, 10, None).unwrap().len(), 1);
+
+  // Uma mensagem que já aparece não é escondida por uma sincronização posterior.
+  db.import_history_chat(
+    &meta,
+    None,
+    &[msg(A, "ancora", 10, false, true)],
+    Some("ancora"),
+  )
+  .unwrap();
+  assert_eq!(db.last_messages(A, 10, None).unwrap().len(), 1);
 }

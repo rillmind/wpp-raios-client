@@ -75,10 +75,18 @@ const enc = encodeURIComponent
 
 export const api = {
   chats: () => request<Chat[]>('/api/chats?limit=500'),
-  messages: (jid: string, before?: number) =>
-    request<MessagesPage>(
-      `/api/chats/${enc(jid)}/messages${before != null ? `?before=${before}&limit=50` : ''}`,
-    ),
+  messages: (jid: string, opts: { before?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.before != null) q.set('before', String(opts.before))
+    if (opts.limit) q.set('limit', String(opts.limit))
+    return request<MessagesPage>(`/api/chats/${enc(jid)}/messages${q.size ? `?${q}` : ''}`)
+  },
+  /** "Carregar mensagens": as guardadas e, se faltar, pede as anteriores ao celular. */
+  loadOlder: (jid: string, before?: number) =>
+    request<{ messages: Message[]; requested: boolean }>(`/api/chats/${enc(jid)}/load-older`, {
+      method: 'POST',
+      body: JSON.stringify(before != null ? { before } : {}),
+    }),
   markRead: (jid: string) => request<Chat>(`/api/chats/${enc(jid)}/read`, { method: 'POST' }),
   /** Arquiva, fixa, silencia (por `hours`, ou para sempre) ou marca como não lida. */
   action: (jid: string, action: string, hours?: number) =>

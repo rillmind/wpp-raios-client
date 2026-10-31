@@ -36,8 +36,6 @@ use crate::model::{
 
 pub struct WaOptions {
   pub session_db: PathBuf,
-  /// Máximo de mensagens guardadas por chat vindas da sincronização inicial.
-  pub history_msgs_per_chat: usize,
 }
 
 /// Fotos de perfil buscadas ao mesmo tempo (a lista pede várias de uma vez).
@@ -82,7 +80,6 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     qr: Arc::clone(&qr),
     tx,
     state: state_tx,
-    history_limit: opts.history_msgs_per_chat,
     groups_named: Mutex::new(HashSet::new()),
     lids_seen: Mutex::new(HashSet::new()),
   });
@@ -411,6 +408,22 @@ impl WhatsApp for RustWa {
     })
   }
 
+  async fn request_history(&self, anchor: &Message, count: u32) -> Result<()> {
+    let chat = parse_jid(&anchor.chat_jid)?;
+    self
+      .client
+      .fetch_message_history(
+        &chat,
+        &anchor.id,
+        anchor.from_me,
+        anchor.ts * 1000,
+        i32::try_from(count).unwrap_or(20),
+      )
+      .await
+      .map(|_| ())
+      .map_err(|e| anyhow!("pedindo mensagens ao celular: {e}"))
+  }
+
   async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
     let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
     let actions = self.client.chat_actions();
@@ -669,7 +682,6 @@ struct Translator {
   qr: Arc<Mutex<Option<String>>>,
   tx: mpsc::Sender<WaEvent>,
   state: Arc<watch::Sender<ConnState>>,
-  history_limit: usize,
   /// Grupos cujo nome já foi buscado nesta execução.
   groups_named: Mutex<HashSet<String>>,
   /// `@lid` cujo telefone já foi procurado nesta execução.
@@ -903,13 +915,15 @@ impl Translator {
   async fn handle_history(&self, lazy: &LazyHistorySync) {
     use wa::history_sync::HistorySyncType;
     let sync_type = lazy.sync_type();
-    // Só a sincronização inicial e a recente; histórico completo (FULL) e
-    // sob demanda ficam fora, por desenho do app.
+    // A sincronização inicial e a recente, e as respostas a "carregar mensagens"
+    // (sob demanda). O histórico completo (FULL) fica fora, por desenho do app.
     let wanted = [
       HistorySyncType::INITIAL_BOOTSTRAP as i32,
       HistorySyncType::RECENT as i32,
       HistorySyncType::PUSH_NAME as i32,
+      HistorySyncType::ON_DEMAND as i32,
     ];
+    let on_demand = sync_type == HistorySyncType::ON_DEMAND as i32;
     if !wanted.contains(&sync_type) {
       tracing::debug!(sync_type, "pacote de histórico ignorado");
       return;
@@ -929,7 +943,7 @@ impl Translator {
       for ev in conversation_people(conv) {
         self.send(ev).await;
       }
-      if let Some(ev) = convert_conversation(conv, self.history_limit) {
+      if let Some(ev) = convert_conversation(conv, on_demand) {
         self.send(ev).await;
       }
     }
@@ -1113,7 +1127,9 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, O
   Some((msg, media))
 }
 
-fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent> {
+/// Conversa do histórico. Na sincronização inicial guarda só as não lidas e a mais nova
+/// (ponto de partida para pedir as anteriores ao celular); sob demanda, tudo o que veio.
+fn convert_conversation(conv: &wa::Conversation, on_demand: bool) -> Option<WaEvent> {
   let jid: Jid = conv.id.parse().ok()?;
   if jid.is_status_broadcast() || jid.is_newsletter() {
     return None;
@@ -1129,25 +1145,58 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
     .filter_map(|wmi| convert_history_msg(wmi, &chat_jid, jid.is_group()))
     .collect();
   converted.sort_by_key(|(m, _)| std::cmp::Reverse(m.ts));
-  converted.truncate(limit);
-  let mut media = Vec::new();
-  let mut messages = Vec::with_capacity(converted.len());
-  for (m, r) in converted {
-    if let Some(r) = r {
-      media.push((m.id.clone(), r));
+
+  if on_demand {
+    // Mensagens antigas pedidas pela pessoa: já lidas, e o resto do chat não muda.
+    let mut media = Vec::new();
+    let mut messages = Vec::with_capacity(converted.len());
+    for (mut m, r) in converted {
+      m.is_read = true;
+      if let Some(r) = r {
+        media.push((m.id.clone(), r));
+      }
+      messages.push(m);
     }
-    messages.push(m);
+    return Some(WaEvent::HistoryChat {
+      meta: ChatMeta {
+        jid: chat_jid,
+        is_group: jid.is_group(),
+        ..Default::default()
+      },
+      last_ts: None,
+      messages,
+      media,
+      on_demand: true,
+      hidden_id: None,
+    });
   }
 
   // As `unread` mensagens recebidas mais recentes são as não lidas.
   let mut left = unread as usize;
-  for m in messages.iter_mut().filter(|m| !m.from_me) {
+  for (m, _) in converted.iter_mut().filter(|(m, _)| !m.from_me) {
     if left == 0 {
       m.is_read = true;
     } else {
       m.is_read = false;
       left -= 1;
     }
+  }
+  let mut media = Vec::new();
+  let mut messages = Vec::new();
+  // A mais nova fica de âncora; se já foi lida, guardada sem aparecer (a conversa abre
+  // vazia na primeira vez, e ela surge no primeiro "carregar mensagens").
+  let mut hidden_id = None;
+  for (i, (m, r)) in converted.into_iter().enumerate() {
+    if m.is_read && i > 0 {
+      continue;
+    }
+    if m.is_read {
+      hidden_id = Some(m.id.clone());
+    }
+    if let Some(r) = r {
+      media.push((m.id.clone(), r));
+    }
+    messages.push(m);
   }
 
   let last_ts = conv
@@ -1178,6 +1227,8 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
     last_ts,
     messages,
     media,
+    on_demand: false,
+    hidden_id,
   })
 }
 

@@ -10,6 +10,7 @@ const NAMES = [
   'message.updated',
   'message.deleted',
   'chat.updated',
+  'history.loaded',
   'connection.state',
 ] as const
 
