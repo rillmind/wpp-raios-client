@@ -12,6 +12,7 @@ import { Rail } from './components/Rail'
 
 // Marcada: abrir a conversa não envia recibo de leitura. Desmarcada (padrão): envia.
 const NO_READ_KEY = 'wpp.noRead'
+const STATUS_JID = 'status@broadcast'
 
 function loadNoRead(): boolean {
   try {
@@ -181,6 +182,12 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selected, closeChat])
 
+  // Status é uma conversa só: o botão abre ela direto.
+  function chooseSection(s: Section) {
+    setSection(s)
+    if (s === 'status' && chats.some((c) => c.jid === STATUS_JID)) select(STATUS_JID)
+  }
+
   function select(jid: string) {
     selectedRef.current = jid
     setSelected(jid)
@@ -245,7 +252,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
       <Rail
         section={section}
         unread={unread}
-        onSection={setSection}
+        onSection={chooseSection}
       />
       <aside className="sidebar">
         <header className="topbar">
