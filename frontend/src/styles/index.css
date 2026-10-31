@@ -209,36 +209,46 @@ code {
 }
 
 
-/* Estado da conexão */
-.conn {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0.35rem 1rem;
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-  border-bottom: 1px solid var(--border);
-}
-.conn__dot {
-  width: 8px;
-  height: 8px;
+/* Estado da conexão: pontinho no fim da barra lateral, com o texto num balão */
+.rail__conn {
+  position: relative;
+  margin-top: auto;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--fg-muted);
+  outline-offset: 4px;
 }
-.conn--ok .conn__dot {
+.rail__conn.conn--ok {
   background: var(--ok);
 }
-.conn--warn .conn__dot {
+.rail__conn.conn--warn {
   background: var(--warn);
 }
-.conn--err {
-  color: var(--err);
-}
-.conn--err .conn__dot {
+.rail__conn.conn--err {
   background: var(--err);
 }
-
+.rail__conn::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 0.6rem);
+  bottom: -0.3rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-bar);
+  color: var(--fg);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 10;
+}
+.rail__conn:hover::after,
+.rail__conn:focus-visible::after {
+  opacity: 1;
+}
 
 /* Lista de chats */
 .chat-list {
@@ -570,6 +580,18 @@ code {
   }
   .rail__sep {
     display: none;
+  }
+  .rail__conn {
+    margin-top: 0;
+    align-self: center;
+  }
+  .rail__conn::after {
+    left: auto;
+    right: -0.3rem;
+    bottom: calc(100% + 0.6rem);
+  }
+  .rail__conn:focus::after {
+    opacity: 1;
   }
   .main {
     display: none;

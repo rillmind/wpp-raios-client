@@ -466,7 +466,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     return n
   }, [chats])
   const connClass = stream !== 'open' ? 'warn' : conn === 'connected' ? 'ok' : conn === 'disconnected' || conn === 'connecting' ? 'warn' : 'err'
-  const connText = stream !== 'open' ? 'Sem conexão com o backend…' : CONN_LABEL[conn]
+  const connText = stream !== 'open' ? 'Servidor desconectado…' : CONN_LABEL[conn]
 
   return (
     <div className={selected ? 'app app--chat-open' : 'app'}>
@@ -474,6 +474,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
         section={section}
         unread={unread}
         onSection={chooseSection}
+        conn={{ level: connClass, text: connText }}
       />
       <aside className="sidebar">
         <header className="topbar">
@@ -486,10 +487,6 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             Não visualizar ao abrir
           </label>
         </header>
-        <p className={`conn conn--${connClass}`} role="status">
-          <span className="conn__dot" aria-hidden="true" />
-          {connText}
-        </p>
         <ChatList
           chats={visible}
           selected={selected}
