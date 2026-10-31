@@ -26,6 +26,8 @@ pub struct ChatSummary {
   pub unread_count: u32,
   pub last_msg_ts: Option<i64>,
   pub last_msg_preview: Option<String>,
+  /// Status (tiques) da última mensagem, quando ela é nossa.
+  pub last_status: Option<MsgStatus>,
   pub archived: bool,
   pub pinned: bool,
 }
@@ -335,6 +337,15 @@ impl Db {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
   }
 
+  /// Grupos ainda sem nome.
+  pub fn untitled_groups(&self) -> Result<Vec<String>> {
+    let mut stmt = self
+      .conn
+      .prepare("SELECT jid FROM chats WHERE name IS NULL AND jid LIKE '%@g.us'")?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+  }
+
   /// Chats cujo nome depende dos nomes de `jid` (ele mesmo e o outro lado do mapa).
   pub fn chats_of_person(&self, jid: &str) -> Result<Vec<ChatSummary>> {
     let mut stmt = self.conn.prepare(&format!(
@@ -502,7 +513,9 @@ const CHAT_SELECT: &str = "SELECT c.jid,
           ELSE COALESCE(pc.contact_name, dc.contact_name, dc.push_name, pc.push_name, c.name)
      END,
      COALESCE(lm.pn, CASE WHEN c.jid LIKE '%@s.whatsapp.net' THEN c.jid END),
-     c.is_group, c.unread_count, c.last_msg_ts, c.last_msg_preview, c.archived, c.pinned
+     c.is_group, c.unread_count, c.last_msg_ts, c.last_msg_preview, c.archived, c.pinned,
+     (SELECT CASE WHEN lm2.from_me THEN lm2.status END FROM messages lm2
+       WHERE lm2.chat_jid = c.jid ORDER BY lm2.ts DESC, lm2.rowid DESC LIMIT 1)
    FROM chats c
    LEFT JOIN lid_map lm ON lm.lid = c.jid
    LEFT JOIN contacts dc ON dc.jid = c.jid
@@ -554,6 +567,10 @@ fn chat_from_row(r: &Row<'_>) -> rusqlite::Result<ChatSummary> {
     last_msg_preview: r.get(6)?,
     archived: r.get(7)?,
     pinned: r.get(8)?,
+    last_status: r
+      .get::<_, Option<String>>(9)?
+      .as_deref()
+      .and_then(MsgStatus::parse),
   })
 }
 

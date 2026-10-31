@@ -44,6 +44,11 @@ async fn main() -> Result<()> {
   tokio::spawn(ingest::backfill_lids(
     store.clone(),
     Arc::clone(&whatsapp),
+    tx.clone(),
+  ));
+  tokio::spawn(ingest::backfill_titles(
+    store.clone(),
+    Arc::clone(&whatsapp),
     tx,
   ));
   tokio::spawn(ingest::resync_contacts_once(

@@ -157,23 +157,25 @@ impl WhatsApp for RustWa {
 
   async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>> {
     let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
-    // Status e canais não respondem a esta consulta (só esperariam o timeout).
-    if !(jid.is_pn() || jid.is_lid() || jid.is_group()) {
-      return Ok(None);
-    }
     let _slot = self.avatar_slots.acquire().await?;
-    let Some(pic) = self
-      .client
-      .contacts()
-      .get_profile_picture_with_timeout(&jid, true, Some(AVATAR_TIMEOUT))
-      .await
-      .map_err(|e| anyhow!("buscando foto de perfil: {e}"))?
-    else {
+    let url = if jid.is_pn() || jid.is_lid() || jid.is_group() {
+      match self
+        .client
+        .contacts()
+        .get_profile_picture_with_timeout(&jid, true, Some(AVATAR_TIMEOUT))
+        .await
+        .map_err(|e| anyhow!("buscando foto de perfil: {e}"))?
+      {
+        Some(pic) => pic.url,
+        None => return Ok(None),
+      }
+    } else {
+      // Status não tem foto; canais, nesta versão da lib, não dão (MEX 400).
       return Ok(None);
     };
     let resp = tokio::time::timeout(
       AVATAR_TIMEOUT,
-      self.client.http_client.execute(HttpRequest::get(pic.url)),
+      self.client.http_client.execute(HttpRequest::get(url)),
     )
     .await
     .map_err(|_| anyhow!("foto de perfil: tempo esgotado"))?
@@ -204,6 +206,11 @@ impl WhatsApp for RustWa {
       })
       .await;
     Ok(())
+  }
+
+  async fn chat_title(&self, jid: &str) -> Result<Option<String>> {
+    let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    chat_title(&self.client, &jid).await
   }
 
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {
@@ -469,7 +476,7 @@ impl Translator {
     }
   }
 
-  /// Busca o nome (assunto) do grupo uma vez por execução.
+  /// Busca o nome do grupo uma vez por execução.
   async fn ensure_group_name(&self, client: &Arc<Client>, chat: &Jid) {
     if !chat.is_group() {
       return;
@@ -487,18 +494,18 @@ impl Translator {
     let chat = chat.clone();
     let tx = self.tx.clone();
     tokio::spawn(async move {
-      match client.groups().get_metadata(&chat).await {
-        Ok(meta) => {
+      match chat_title(&client, &chat).await {
+        Ok(name) => {
           let _ = tx
             .send(WaEvent::ChatMeta(ChatMeta {
               jid: key,
-              name: non_empty(&meta.subject),
+              name,
               is_group: true,
               ..Default::default()
             }))
             .await;
         }
-        Err(e) => tracing::debug!(error = %e, "falha ao buscar dados do grupo"),
+        Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
       }
     });
   }
@@ -516,6 +523,20 @@ impl Translator {
       tracing::warn!("canal de eventos fechado");
     }
   }
+}
+
+/// Assunto do grupo (consulta ao WhatsApp). Canais ficam sem nome: as consultas de
+/// canal da lib 0.7.0 são recusadas pelo servidor (MEX 400), ver `docs/FINDINGS.md`.
+async fn chat_title(client: &Client, jid: &Jid) -> Result<Option<String>> {
+  if !jid.is_group() {
+    return Ok(None);
+  }
+  let meta = client
+    .groups()
+    .get_metadata(jid)
+    .await
+    .map_err(|e| anyhow!("{e}"))?;
+  Ok(non_empty(&meta.subject))
 }
 
 fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, Option<MediaRef>)> {

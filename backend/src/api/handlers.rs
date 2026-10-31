@@ -164,6 +164,12 @@ pub async fn send(
   Json(body): Json<SendBody>,
 ) -> ApiResult<Json<Message>> {
   validate_jid(&jid)?;
+  // Enviar para `status@broadcast` publicaria um status; canais são de leitura.
+  if jid == "status@broadcast" || jid.ends_with("@newsletter") {
+    return Err(ApiError::BadRequest(
+      "status e canais são só de leitura".into(),
+    ));
+  }
   let text = body.text.trim();
   if text.is_empty() {
     return Err(ApiError::BadRequest("texto vazio".into()));

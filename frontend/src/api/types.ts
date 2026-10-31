@@ -12,6 +12,8 @@ export interface Chat {
   unread_count: number
   last_msg_ts: number | null
   last_msg_preview: string | null
+  /** Tiques da última mensagem, quando ela é nossa. */
+  last_status: MsgStatus | null
   archived: boolean
   pinned: boolean
 }

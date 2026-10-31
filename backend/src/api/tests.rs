@@ -63,6 +63,10 @@ impl WhatsApp for FakeWa {
     }
   }
 
+  async fn chat_title(&self, _jid: &str) -> Result<Option<String>> {
+    Ok(None)
+  }
+
   async fn resync_contacts(&self) -> Result<()> {
     Ok(())
   }
@@ -556,4 +560,23 @@ async fn media_and_avatar_need_connection() {
   });
   let (status, ..) = get_raw(&h, &format!("/api/chats/{A}/avatar")).await;
   assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn send_refuses_status_and_channels() {
+  let h = harness();
+  for jid in ["status@broadcast", "120363000000000000@newsletter"] {
+    let (status, _) = call(
+      &h,
+      "POST",
+      &format!("/api/chats/{jid}/send"),
+      Some(json!({ "text": "oi" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{jid}");
+  }
+  assert!(
+    h.wa.sent.lock().unwrap().is_empty(),
+    "nada pode ser enviado"
+  );
 }

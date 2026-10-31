@@ -5,6 +5,8 @@ import { useEvents } from './api/useEvents'
 import { ChatList } from './components/ChatList'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
+import { chatSection, SECTION_TITLE, type Section } from './components/format'
+import { Rail } from './components/Rail'
 
 const AUTO_READ_KEY = 'wpp.autoRead'
 
@@ -61,7 +63,7 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [conn, setConn] = useState<ConnState>('connecting')
   const [selected, setSelected] = useState<string | null>(null)
   const [conv, setConv] = useState<ConvState | null>(null)
-  const [showArchived, setShowArchived] = useState(false)
+  const [section, setSection] = useState<Section>('chats')
   const [autoRead, setAutoRead] = useState(loadAutoRead)
   const selectedRef = useRef(selected)
   useLayoutEffect(() => {
@@ -223,30 +225,32 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   }
 
-  const visible = useMemo(() => chats.filter((c) => c.archived === showArchived), [chats, showArchived])
-  const archivedCount = useMemo(() => chats.filter((c) => c.archived).length, [chats])
+  const visible = useMemo(() => chats.filter((c) => chatSection(c) === section), [chats, section])
+  const unread = useMemo(() => {
+    const n: Record<Section, number> = { chats: 0, archived: 0, status: 0, channels: 0 }
+    for (const c of chats) if (c.unread_count > 0) n[chatSection(c)] += 1
+    return n
+  }, [chats])
   const connClass = stream !== 'open' ? 'warn' : conn === 'connected' ? 'ok' : conn === 'disconnected' || conn === 'connecting' ? 'warn' : 'err'
   const connText = stream !== 'open' ? 'Sem conexão com o backend…' : CONN_LABEL[conn]
 
   return (
     <div className={selected ? 'app app--chat-open' : 'app'}>
+      <Rail
+        section={section}
+        unread={unread}
+        autoRead={autoRead}
+        onSection={setSection}
+        onToggleAutoRead={toggleAutoRead}
+      />
       <aside className="sidebar">
         <header className="topbar">
-          <h1 className="topbar__title">{showArchived ? 'Arquivadas' : 'Conversas'}</h1>
-          <label className="toggle" title="Ao abrir a conversa, enviar recibo de leitura automaticamente">
-            <input type="checkbox" checked={autoRead} onChange={toggleAutoRead} />
-            Ler ao abrir
-          </label>
+          <h1 className="topbar__title">{SECTION_TITLE[section]}</h1>
         </header>
         <p className={`conn conn--${connClass}`} role="status">
           <span className="conn__dot" aria-hidden="true" />
           {connText}
         </p>
-        {(archivedCount > 0 || showArchived) && (
-          <button type="button" className="btn btn--ghost archived-toggle" onClick={() => setShowArchived((v) => !v)}>
-            {showArchived ? '← Conversas' : `Arquivadas (${archivedCount})`}
-          </button>
-        )}
         <ChatList chats={visible} selected={selected} onSelect={select} />
       </aside>
 

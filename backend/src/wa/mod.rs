@@ -91,6 +91,9 @@ pub trait WhatsApp: Send + Sync {
   /// [`WaEvent::Contact`] com `contact_name`.
   async fn resync_contacts(&self) -> Result<()>;
 
+  /// Assunto do grupo; `None` para outros jids.
+  async fn chat_title(&self, jid: &str) -> Result<Option<String>>;
+
   /// Jid de telefone de um `@lid`, pelo que a sessão já aprendeu (sem rede).
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>>;
 

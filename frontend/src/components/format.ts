@@ -15,6 +15,27 @@ export function messageText(m: Message): string {
   return m.body ? `${tag} ${m.body}` : tag
 }
 
+export type Section = 'chats' | 'archived' | 'status' | 'channels'
+
+export const SECTION_TITLE: Record<Section, string> = {
+  chats: 'Conversas',
+  archived: 'Arquivadas',
+  status: 'Status',
+  channels: 'Canais',
+}
+
+/** Seção da barra lateral onde a conversa aparece. */
+export function chatSection(c: Chat): Section {
+  if (c.jid === 'status@broadcast') return 'status'
+  if (c.jid.endsWith('@newsletter')) return 'channels'
+  return c.archived ? 'archived' : 'chats'
+}
+
+/** Status e canais: só leitura (enviar no status publicaria um status). */
+export function isReadOnly(jid: string): boolean {
+  return jid === 'status@broadcast' || jid.endsWith('@newsletter')
+}
+
 export function chatName(c: Chat): string {
   if (c.name) return c.name
   if (c.phone) return formatPhone(c.phone)

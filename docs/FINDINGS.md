@@ -103,6 +103,10 @@ Várias fontes, todas tratadas como `WaEvent::ChatMeta` (só sobrescrevem quando
   `ContactAction.lidJid`/`pnJid`, `Conversation.lidJid`/`pnJid` e, para o que já estava gravado,
   `Client::get_lid_pn_entry` (tabela `lid_pn_mapping` da sessão, consultada sem rede). Não houve
   chats duplicados: as entradas por telefone eram só nomes, sem mensagens.
+- **Canais (newsletters):** `newsletter().get_metadata()` e `list_subscribed()` falham na 0.7.0
+  com `MEX fatal error (... code=400): Bad Request` (as consultas persistidas da lib não são mais
+  aceitas pelo servidor). Sem nome nem foto de canal até a lib corrigir; as mensagens chegam
+  normalmente. Grupos de que a pessoa saiu respondem `403 forbidden` a `groups().get_metadata()`.
 - **Agenda x apelido:** no pareamento, os apelidos do histórico (`PUSH_NAME`) chegaram depois dos
   nomes da agenda e, quando os dois iam para o mesmo campo, ficavam por cima. Para recuperar a
   agenda: `AppSyncStore::set_version("critical_unblock_low", HashState::default())` e
