@@ -28,7 +28,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Abre a conversa na primeira mensagem não lida, com um separador, e com a caixa de mensagem já
   selecionada (em telas de toque não, para não abrir o teclado). Esc fecha a conversa e volta à
   tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
-- Envia mensagens de texto (Enter envia, Shift+Enter quebra linha). Cada conversa tem o seu
+- Envia mensagens de texto. No computador, Enter envia e Shift+Enter quebra linha; no celular,
+  Enter quebra linha, só o botão "Enviar" envia, e o teclado continua aberto depois do envio. Cada conversa tem o seu
   rascunho: trocar de conversa não leva o texto junto.
 - Botão direito numa conversa da lista (toque longo no Android) abre um menu para arquivar ou
   desarquivar, fixar ou desafixar, silenciar (8 horas, 1 semana ou para sempre) ou reativar o som

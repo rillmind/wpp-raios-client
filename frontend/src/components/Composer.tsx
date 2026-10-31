@@ -5,6 +5,10 @@ interface Props {
   onSend: (text: string) => Promise<void>
 }
 
+function isTouch(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches
+}
+
 export function Composer({ disabled, onSend }: Props) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -14,7 +18,7 @@ export function Composer({ disabled, onSend }: Props) {
   // Ao abrir a conversa (o componente é montado por conversa), já deixa pronto para
   // escrever. Em tela de toque não: abriria o teclado só para ler.
   useEffect(() => {
-    if (!disabled && !window.matchMedia('(pointer: coarse)').matches) input.current?.focus()
+    if (!disabled && !isTouch()) input.current?.focus()
   }, [disabled])
 
   async function submit() {
@@ -33,7 +37,9 @@ export function Composer({ disabled, onSend }: Props) {
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // Enter envia; Shift+Enter quebra linha (e não interfere em composição IME).
+    // Computador: Enter envia, Shift+Enter quebra linha (e não interfere em composição IME).
+    // Tela de toque: Enter sempre quebra linha; só o botão envia.
+    if (isTouch()) return
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       void submit()
@@ -64,8 +70,15 @@ export function Composer({ disabled, onSend }: Props) {
           disabled={disabled}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
+          enterKeyHint="enter"
         />
-        <button type="submit" className="btn btn--primary" disabled={disabled || sending || !text.trim()}>
+        <button
+          type="submit"
+          className="btn btn--primary"
+          disabled={disabled || sending || !text.trim()}
+          // Não tira o foco da caixa: no celular, isso fecharia o teclado a cada envio.
+          onPointerDown={(e) => e.preventDefault()}
+        >
           Enviar
         </button>
       </div>
