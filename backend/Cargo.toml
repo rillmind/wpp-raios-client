@@ -10,7 +10,7 @@ async-trait = "0.1"
 axum = "0.8"
 futures-util = "0.3"
 getrandom = "0.3"
-qrcode = { version = "0.14", default-features = false }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Mesma libsqlite3-sys (0.37) que a whatsapp-rust já usa.
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

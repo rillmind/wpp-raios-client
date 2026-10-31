@@ -9,7 +9,7 @@ mod tests;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -52,11 +52,29 @@ pub fn router(
     .route("/api/chats", get(handlers::list_chats))
     .route("/api/chats/{jid}/messages", get(handlers::messages))
     .route("/api/chats/{jid}/read", post(handlers::mark_read))
+    .route("/api/chats/{jid}/action", post(handlers::chat_action))
     .route("/api/chats/{jid}/send", post(handlers::send))
+    .route(
+      "/api/chats/{jid}/send-media",
+      post(handlers::send_media).layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
+    )
+    .route("/api/chats/{jid}/avatar", get(handlers::avatar))
+    .route("/api/chats/{jid}/messages/{id}/media", get(handlers::media))
+    .route(
+      "/api/chats/{jid}/messages/{id}/action",
+      post(handlers::message_action),
+    )
+    .route(
+      "/api/chats/{jid}/messages/{id}/forward",
+      post(handlers::forward),
+    )
     .route("/api/events", get(handlers::events))
     .route_layer(middleware::from_fn_with_state(state.clone(), auth))
     // Fora da autenticação: só diz que o processo responde (healthcheck do container).
     .route("/healthz", get(|| async { "ok" }))
+    // Fora da autenticação: no primeiro uso a pessoa ainda não tem o token à mão.
+    // Só devolve o QR enquanto não há celular pareado.
+    .route("/api/pairing", get(handlers::pairing))
     .with_state(state);
 
   let app = match front_dir {

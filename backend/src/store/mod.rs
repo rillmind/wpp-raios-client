@@ -12,7 +12,9 @@ use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use crate::model::{ChatMeta, Contact, Message, MessageKind, MsgStatus};
+use crate::model::{
+  ChatAction, ChatMeta, Contact, MediaInfo, MediaRef, Message, MessageKind, MsgStatus,
+};
 
 /// Item da lista de chats.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -26,8 +28,17 @@ pub struct ChatSummary {
   pub unread_count: u32,
   pub last_msg_ts: Option<i64>,
   pub last_msg_preview: Option<String>,
+  /// Status (tiques) da última mensagem, quando ela é nossa.
+  pub last_status: Option<MsgStatus>,
+  /// Grupos: quem mandou a última mensagem ("Você", agenda, apelido ou `+telefone`).
+  pub last_sender: Option<String>,
   pub archived: bool,
   pub pinned: bool,
+  /// Silenciada agora (notificações desligadas no celular).
+  pub muted: bool,
+  /// Jid de quem mandou a última mensagem do grupo (`""` = nós); vira `last_sender`.
+  #[serde(skip)]
+  last_sender_jid: Option<String>,
 }
 
 /// Mensagem recebida ainda não lida, para recibo de leitura.
@@ -124,6 +135,31 @@ impl Db {
     Ok(())
   }
 
+  /// Reflete no banco uma ação já feita no WhatsApp.
+  pub fn apply_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
+    let mut meta = ChatMeta {
+      jid: chat_jid.to_string(),
+      ..Default::default()
+    };
+    match action {
+      ChatAction::Archive(archived) => {
+        meta.archived = Some(archived);
+        // O WhatsApp não deixa conversa arquivada fixada.
+        if archived {
+          meta.pinned = Some(false);
+        }
+      }
+      ChatAction::Pin(pinned) => meta.pinned = Some(pinned),
+      ChatAction::Mute(until) => meta.muted_until = Some(until.unwrap_or(-1)),
+      ChatAction::Unmute => meta.muted_until = Some(0),
+      ChatAction::MarkUnread => {
+        let current = self.get_chat(chat_jid)?.map_or(0, |c| c.unread_count);
+        return self.set_unread(chat_jid, current.max(1));
+      }
+    }
+    self.upsert_chat(&meta)
+  }
+
   pub fn set_unread(&self, chat_jid: &str, count: u32) -> Result<()> {
     self.conn.execute(
       "UPDATE chats SET unread_count = ?2 WHERE jid = ?1",
@@ -217,6 +253,188 @@ impl Db {
     Ok(changed)
   }
 
+  pub fn get_message(&self, chat_jid: &str, id: &str) -> Result<Option<Message>> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          &format!("{} WHERE m.chat_jid = ?1 AND m.id = ?2", msg_select()),
+          params![chat_jid, id],
+          message_from_row,
+        )
+        .optional()?,
+    )
+  }
+
+  /// Devolve `true` se a mensagem existe.
+  pub fn set_starred(&self, chat_jid: &str, id: &str, starred: bool) -> Result<bool> {
+    Ok(
+      self.conn.execute(
+        "UPDATE messages SET starred = ?3 WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id, starred],
+      )? > 0,
+    )
+  }
+
+  /// Fixada até `until_ms`; `None` desafixa.
+  pub fn set_pinned_until(&self, chat_jid: &str, id: &str, until_ms: Option<i64>) -> Result<bool> {
+    Ok(
+      self.conn.execute(
+        "UPDATE messages SET pinned_until = ?3 WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id, until_ms],
+      )? > 0,
+    )
+  }
+
+  /// Apagada para todos: some o conteúdo (e a mídia), fica o aviso.
+  pub fn revoke_message(&mut self, chat_jid: &str, id: &str) -> Result<bool> {
+    let tx = self.conn.transaction()?;
+    let n = tx.execute(
+      "UPDATE messages SET kind = 'revoked', body = NULL, quoted_id = NULL, starred = 0,
+         pinned_until = NULL
+       WHERE chat_jid = ?1 AND id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.execute(
+      "DELETE FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.commit()?;
+    if n > 0 {
+      self.refresh_preview(chat_jid)?;
+    }
+    Ok(n > 0)
+  }
+
+  /// Apagada só para nós: sai do banco (é o que a pessoa pediu).
+  pub fn delete_message(&mut self, chat_jid: &str, id: &str) -> Result<bool> {
+    let tx = self.conn.transaction()?;
+    let unread: bool = tx
+      .query_row(
+        "SELECT from_me = 0 AND is_read = 0 FROM messages WHERE chat_jid = ?1 AND id = ?2",
+        params![chat_jid, id],
+        |r| r.get(0),
+      )
+      .optional()?
+      .unwrap_or(false);
+    let n = tx.execute(
+      "DELETE FROM messages WHERE chat_jid = ?1 AND id = ?2",
+      params![chat_jid, id],
+    )?;
+    tx.execute(
+      "DELETE FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+      params![chat_jid, id],
+    )?;
+    if unread {
+      tx.execute(
+        "UPDATE chats SET unread_count = MAX(unread_count - 1, 0) WHERE jid = ?1",
+        params![chat_jid],
+      )?;
+    }
+    tx.commit()?;
+    if n > 0 {
+      self.refresh_preview(chat_jid)?;
+    }
+    Ok(n > 0)
+  }
+
+  /// Refaz a prévia a partir da mensagem mais nova que sobrou.
+  fn refresh_preview(&self, chat_jid: &str) -> Result<()> {
+    let last = self.last_messages(chat_jid, 1, None)?.pop();
+    self.conn.execute(
+      "UPDATE chats SET last_msg_preview = ?2 WHERE jid = ?1",
+      params![chat_jid, last.as_ref().map(preview)],
+    )?;
+    Ok(())
+  }
+
+  /// Guarda a referência de download da mídia de uma mensagem (não o arquivo).
+  pub fn insert_media(&self, chat_jid: &str, msg_id: &str, m: &MediaRef) -> Result<()> {
+    self.conn.execute(
+      "INSERT INTO media (chat_jid, msg_id, kind, direct_path, media_key, file_sha256,
+         file_enc_sha256, file_length, mimetype, width, height, seconds, file_name)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+       ON CONFLICT(chat_jid, msg_id) DO NOTHING",
+      params![
+        chat_jid,
+        msg_id,
+        m.kind.as_str(),
+        m.direct_path,
+        m.media_key,
+        m.file_sha256,
+        m.file_enc_sha256,
+        m.file_length as i64,
+        m.mimetype,
+        m.width,
+        m.height,
+        m.seconds,
+        m.file_name,
+      ],
+    )?;
+    Ok(())
+  }
+
+  pub fn get_media(&self, chat_jid: &str, msg_id: &str) -> Result<Option<MediaRef>> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          "SELECT kind, direct_path, media_key, file_sha256, file_enc_sha256, file_length,
+             mimetype, width, height, seconds, file_name
+           FROM media WHERE chat_jid = ?1 AND msg_id = ?2",
+          params![chat_jid, msg_id],
+          |r| {
+            let kind: String = r.get(0)?;
+            let len: i64 = r.get(5)?;
+            Ok(MediaRef {
+              kind: MessageKind::parse(&kind),
+              direct_path: r.get(1)?,
+              media_key: r.get(2)?,
+              file_sha256: r.get(3)?,
+              file_enc_sha256: r.get(4)?,
+              file_length: u64::try_from(len).unwrap_or(0),
+              mimetype: r.get(6)?,
+              width: r.get(7)?,
+              height: r.get(8)?,
+              seconds: r.get(9)?,
+              file_name: r.get(10)?,
+            })
+          },
+        )
+        .optional()?,
+    )
+  }
+
+  /// Tarefa única ainda não feita (criada por migração).
+  pub fn has_pending_task(&self, name: &str) -> Result<bool> {
+    Ok(
+      self
+        .conn
+        .query_row(
+          "SELECT 1 FROM pending_tasks WHERE name = ?1",
+          params![name],
+          |_| Ok(()),
+        )
+        .optional()?
+        .is_some(),
+    )
+  }
+
+  pub fn count_agenda_names(&self) -> Result<u32> {
+    Ok(self.conn.query_row(
+      "SELECT COUNT(*) FROM contacts WHERE contact_name IS NOT NULL",
+      [],
+      |r| r.get(0),
+    )?)
+  }
+
+  pub fn finish_pending_task(&self, name: &str) -> Result<()> {
+    self
+      .conn
+      .execute("DELETE FROM pending_tasks WHERE name = ?1", params![name])?;
+    Ok(())
+  }
+
   /// Grava nomes de uma pessoa; campos `None` não apagam os salvos.
   pub fn upsert_contact(&self, c: &Contact) -> Result<()> {
     self.conn.execute(
@@ -252,6 +470,15 @@ impl Db {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
   }
 
+  /// Grupos ainda sem nome.
+  pub fn untitled_groups(&self) -> Result<Vec<String>> {
+    let mut stmt = self
+      .conn
+      .prepare("SELECT jid FROM chats WHERE name IS NULL AND jid LIKE '%@g.us'")?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+  }
+
   /// Chats cujo nome depende dos nomes de `jid` (ele mesmo e o outro lado do mapa).
   pub fn chats_of_person(&self, jid: &str) -> Result<Vec<ChatSummary>> {
     let mut stmt = self.conn.prepare(&format!(
@@ -261,7 +488,19 @@ impl Db {
           OR c.jid IN (SELECT pn FROM lid_map WHERE lid = ?1)"
     ))?;
     let rows = stmt.query_map(params![jid], chat_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    self.name_senders(rows.collect::<rusqlite::Result<_>>()?)
+  }
+
+  /// Preenche `last_sender` dos grupos com o nome de exibição de quem mandou.
+  fn name_senders(&self, mut chats: Vec<ChatSummary>) -> Result<Vec<ChatSummary>> {
+    for c in &mut chats {
+      c.last_sender = match c.last_sender_jid.take().as_deref() {
+        None => None,
+        Some("") => Some("Você".into()),
+        Some(jid) => self.person_name(jid)?,
+      };
+    }
+    Ok(chats)
   }
 
   /// Nome de exibição de uma pessoa: agenda, apelido ou `+telefone`.
@@ -287,28 +526,27 @@ impl Db {
   }
 
   pub fn get_chat(&self, jid: &str) -> Result<Option<ChatSummary>> {
-    Ok(
-      self
-        .conn
-        .query_row(
-          &format!("{CHAT_SELECT} WHERE c.jid = ?1"),
-          params![jid],
-          chat_from_row,
-        )
-        .optional()?,
-    )
+    let chat = self
+      .conn
+      .query_row(
+        &format!("{CHAT_SELECT} WHERE c.jid = ?1"),
+        params![jid],
+        chat_from_row,
+      )
+      .optional()?;
+    Ok(self.name_senders(chat.into_iter().collect())?.pop())
   }
 
-  /// Chats por atividade, do mais recente; `before_ts` pagina.
+  /// Fixados primeiro, depois por atividade, do mais recente; `before_ts` pagina.
   pub fn list_chats(&self, limit: u32, before_ts: Option<i64>) -> Result<Vec<ChatSummary>> {
     let mut stmt = self.conn.prepare(&format!(
       "{CHAT_SELECT}
        WHERE (?1 IS NULL OR c.last_msg_ts < ?1)
-       ORDER BY c.last_msg_ts IS NULL, c.last_msg_ts DESC
+       ORDER BY c.pinned DESC, c.last_msg_ts IS NULL, c.last_msg_ts DESC
        LIMIT ?2"
     ))?;
     let rows = stmt.query_map(params![before_ts, limit], chat_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    self.name_senders(rows.collect::<rusqlite::Result<_>>()?)
   }
 
   /// Últimas `limit` mensagens antes de `before` (exclusivo), em ordem cronológica.
@@ -369,21 +607,23 @@ impl Db {
 
 fn upsert_chat(conn: &Connection, meta: &ChatMeta) -> Result<()> {
   conn.execute(
-    "INSERT INTO chats (jid, name, is_group, unread_count, archived, pinned)
-     VALUES (?1, ?2, ?3, COALESCE(?4, 0), COALESCE(?5, 0), COALESCE(?6, 0))
+    "INSERT INTO chats (jid, name, is_group, unread_count, archived, pinned, muted_until)
+     VALUES (?1, ?2, ?3, COALESCE(?4, 0), COALESCE(?5, 0), COALESCE(?6, 0), ?7)
      ON CONFLICT(jid) DO UPDATE SET
        name         = COALESCE(excluded.name, chats.name),
        is_group     = MAX(chats.is_group, excluded.is_group),
        unread_count = COALESCE(?4, chats.unread_count),
        archived     = COALESCE(?5, chats.archived),
-       pinned       = COALESCE(?6, chats.pinned)",
+       pinned       = COALESCE(?6, chats.pinned),
+       muted_until  = COALESCE(?7, chats.muted_until)",
     params![
       meta.jid,
       meta.name,
       meta.is_group,
       meta.unread_count,
       meta.archived,
-      meta.pinned
+      meta.pinned,
+      meta.muted_until
     ],
   )?;
   Ok(())
@@ -419,7 +659,14 @@ const CHAT_SELECT: &str = "SELECT c.jid,
           ELSE COALESCE(pc.contact_name, dc.contact_name, dc.push_name, pc.push_name, c.name)
      END,
      COALESCE(lm.pn, CASE WHEN c.jid LIKE '%@s.whatsapp.net' THEN c.jid END),
-     c.is_group, c.unread_count, c.last_msg_ts, c.last_msg_preview, c.archived, c.pinned
+     c.is_group, c.unread_count, c.last_msg_ts, c.last_msg_preview, c.archived, c.pinned,
+     (SELECT CASE WHEN lm2.from_me THEN lm2.status END FROM messages lm2
+       WHERE lm2.chat_jid = c.jid ORDER BY lm2.ts DESC, lm2.rowid DESC LIMIT 1),
+     CASE WHEN c.is_group THEN
+       (SELECT CASE WHEN lm3.from_me THEN '' ELSE lm3.sender_jid END FROM messages lm3
+         WHERE lm3.chat_jid = c.jid ORDER BY lm3.ts DESC, lm3.rowid DESC LIMIT 1)
+     END,
+     c.muted_until
    FROM chats c
    LEFT JOIN lid_map lm ON lm.lid = c.jid
    LEFT JOIN contacts dc ON dc.jid = c.jid
@@ -443,8 +690,11 @@ fn display_name(name: Option<String>, pn: Option<String>) -> Option<String> {
 fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
-       m.status, m.is_read, {}
+       m.status, m.is_read, {},
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length, md.seconds, md.file_name,
+       m.starred, m.pinned_until
      FROM messages m
+     LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
      LEFT JOIN contacts sd ON sd.jid = m.sender_jid
      LEFT JOIN contacts sp ON sp.jid = sm.pn",
@@ -469,7 +719,26 @@ fn chat_from_row(r: &Row<'_>) -> rusqlite::Result<ChatSummary> {
     last_msg_preview: r.get(6)?,
     archived: r.get(7)?,
     pinned: r.get(8)?,
+    last_status: r
+      .get::<_, Option<String>>(9)?
+      .as_deref()
+      .and_then(MsgStatus::parse),
+    last_sender: None,
+    last_sender_jid: r.get(10)?,
+    muted: is_muted(r.get(11)?),
   })
+}
+
+/// `muted_until`: -1 = para sempre; no futuro = silenciada.
+fn is_muted(until_ms: Option<i64>) -> bool {
+  matches!(until_ms, Some(u) if u == -1 || u > now_ms())
+}
+
+fn now_ms() -> i64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0)
 }
 
 fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
@@ -487,11 +756,26 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
     quoted_id: r.get(7)?,
     status: status.as_deref().and_then(MsgStatus::parse),
     is_read: r.get(9)?,
+    media: if r.get(12)? {
+      let size: i64 = r.get(16)?;
+      Some(MediaInfo {
+        size: u64::try_from(size).unwrap_or(0),
+        mimetype: r.get(13)?,
+        width: r.get(14)?,
+        height: r.get(15)?,
+        seconds: r.get(17)?,
+        file_name: r.get(18)?,
+      })
+    } else {
+      None
+    },
+    starred: r.get(19)?,
+    pinned: matches!(r.get::<_, Option<i64>>(20)?, Some(u) if u > now_ms()),
   })
 }
 
-/// Texto curto para a lista de chats.
-fn preview(msg: &Message) -> String {
+/// Texto curto para a lista de chats (e para a citação de uma resposta).
+pub fn preview(msg: &Message) -> String {
   let base = match (msg.kind, msg.body.as_deref()) {
     (MessageKind::Text, Some(b)) => b.to_string(),
     (kind, body) => {
@@ -501,6 +785,8 @@ fn preview(msg: &Message) -> String {
         MessageKind::Video => "[vídeo]",
         MessageKind::Doc => "[documento]",
         MessageKind::Sticker => "[figurinha]",
+        MessageKind::ViewOnce => "[visualização única]",
+        MessageKind::Revoked => "[mensagem apagada]",
         _ => "[mensagem]",
       };
       match body {

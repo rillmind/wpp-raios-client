@@ -1,5 +1,6 @@
-//! QR de pareamento no terminal, nas cores Catppuccin Mocha (base/text).
+//! QR de pareamento: no terminal (cores Catppuccin Mocha) e em SVG para a interface.
 
+use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use qrcode::QrCode;
 
@@ -25,5 +26,19 @@ pub fn render(payload: &str) -> Option<String> {
       .map(|line| format!("{fg}{bg}{line}{reset}"))
       .collect::<Vec<_>>()
       .join("\n"),
+  )
+}
+
+/// SVG escuro sobre claro (o que a câmera lê melhor), para a tela de pareamento.
+pub fn svg(payload: &str) -> Option<String> {
+  let code = QrCode::new(payload.as_bytes()).ok()?;
+  Some(
+    code
+      .render::<svg::Color<'_>>()
+      .dark_color(svg::Color("#11111b"))
+      .light_color(svg::Color("#ffffff"))
+      .quiet_zone(true)
+      .min_dimensions(256, 256)
+      .build(),
   )
 }

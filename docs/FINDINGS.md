@@ -103,6 +103,21 @@ Várias fontes, todas tratadas como `WaEvent::ChatMeta` (só sobrescrevem quando
   `ContactAction.lidJid`/`pnJid`, `Conversation.lidJid`/`pnJid` e, para o que já estava gravado,
   `Client::get_lid_pn_entry` (tabela `lid_pn_mapping` da sessão, consultada sem rede). Não houve
   chats duplicados: as entradas por telefone eram só nomes, sem mensagens.
+- **Canais (newsletters):** na 0.7.0, `newsletter().get_metadata()` e `list_subscribed()` falham
+  com `MEX fatal error (... code=400): Bad Request`. A causa é a lista ir com as variáveis vazias;
+  o WhatsApp Web (e a lib no `main`, ainda sem versão publicada) manda
+  `fetch_status_metadata: false` e `fetch_wamo_sub: false`. O app faz essa consulta direto, com
+  `client.mex().query(MexRequest::new(fetch_all_newsletters_metadata::…, Variables { … }))`, e lê
+  `thread_metadata.name.text` e `thread_metadata.preview.direct_path` (foto em
+  `https://mmg.whatsapp.net` + caminho). Ao atualizar a lib, dá para voltar a `list_subscribed()`.
+  Grupos de que a pessoa saiu respondem `403 forbidden` a `groups().get_metadata()`.
+- **Agenda x apelido:** no pareamento, os apelidos do histórico (`PUSH_NAME`) chegaram depois dos
+  nomes da agenda e, quando os dois iam para o mesmo campo, ficavam por cima. Para recuperar a
+  agenda: `AppSyncStore::set_version("critical_unblock_low", HashState::default())` e
+  `Client::process_sync_task(AppStateSync { CriticalUnblockLow, full_sync: true })`. Só pedir o
+  snapshot não basta: a lib descarta snapshot com versão `<=` à guardada ("Skipping stale
+  snapshot"); com a versão em 0 ela o aplica do zero (limpa e regrava os MACs, depois a versão),
+  e cada contato salvo chega como `Event::ContactUpdate` (317 no pareamento real).
 - **Desligamento:** `BotHandle::shutdown()` grava o estado pendente da sessão antes de fechar.
   Depois do desligamento intencional a lib ainda loga "reconnecting immediately", mas o loop termina.
 - A lib também tem `shutdown_signal()` (SIGINT + SIGTERM), usado no `main`.

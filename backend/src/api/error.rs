@@ -9,7 +9,7 @@ pub enum ApiError {
   Unauthorized,
   #[error("{0}")]
   BadRequest(String),
-  #[error("chat não encontrado")]
+  #[error("não encontrado")]
   NotFound,
   #[error("muitos envios; aguarde um instante")]
   RateLimited,

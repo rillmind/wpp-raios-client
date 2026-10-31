@@ -66,6 +66,98 @@ pub async fn backfill_lids(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender
   tracing::info!(lids = lids.len(), found, "telefones dos @lid conferidos");
 }
 
+/// Busca o nome dos grupos que ficaram sem nome (ele só era buscado quando chegava
+/// mensagem nova). Grupos de que a pessoa saiu respondem 403 e ficam sem nome.
+pub async fn backfill_titles(store: Store, wa: Arc<dyn WhatsApp>, tx: mpsc::Sender<WaEvent>) {
+  while wa.state() != crate::model::ConnState::Connected {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+  }
+  let jids = match store.run(|db| db.untitled_groups()).await {
+    Ok(j) => j,
+    Err(e) => {
+      tracing::error!(error = %e, "falha ao listar grupos sem nome");
+      return;
+    }
+  };
+  let mut found = 0;
+  for jid in &jids {
+    match wa.chat_title(jid).await {
+      Ok(Some(name)) => {
+        found += 1;
+        let meta = crate::model::ChatMeta {
+          jid: jid.clone(),
+          name: Some(name),
+          is_group: true,
+          ..Default::default()
+        };
+        if tx.send(WaEvent::ChatMeta(meta)).await.is_err() {
+          return;
+        }
+      }
+      Ok(None) => {}
+      Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
+    }
+  }
+  tracing::info!(chats = jids.len(), found, "nomes de grupos conferidos");
+
+  // Canais: uma consulta traz o nome de todos os assinados.
+  match wa.channels().await {
+    Ok(channels) => {
+      let n = channels.len();
+      for (jid, name) in channels {
+        let meta = crate::model::ChatMeta {
+          jid,
+          name: Some(name),
+          ..Default::default()
+        };
+        if tx.send(WaEvent::ChatMeta(meta)).await.is_err() {
+          return;
+        }
+      }
+      tracing::info!(canais = n, "nomes de canais conferidos");
+    }
+    Err(e) => tracing::warn!(error = %e, "falha ao buscar os canais"),
+  }
+}
+
+/// Tarefa única: pede a agenda de novo assim que conectar (ver migração 4).
+pub async fn resync_contacts_once(store: Store, wa: Arc<dyn WhatsApp>) {
+  const TASK: &str = "contacts_resync";
+  match store.run(|db| db.has_pending_task(TASK)).await {
+    Ok(true) => {}
+    Ok(false) => return,
+    Err(e) => {
+      tracing::error!(error = %e, "falha ao ler tarefas pendentes");
+      return;
+    }
+  }
+  while wa.state() != crate::model::ConnState::Connected {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+  }
+  tracing::info!("pedindo a agenda de contatos de novo ao WhatsApp");
+  if let Err(e) = wa.resync_contacts().await {
+    tracing::warn!(error = %e, "falha ao pedir a agenda; tenta de novo no próximo início");
+    return;
+  }
+  // Os contatos chegam como eventos pela fila do ingest; dá um tempo para gravarem.
+  tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+  let named = store
+    .run(|db| {
+      let n = db.count_agenda_names()?;
+      // Sem nenhum nome, algo falhou: tenta de novo no próximo início.
+      if n > 0 {
+        db.finish_pending_task(TASK)?;
+      }
+      Ok(n)
+    })
+    .await;
+  match named {
+    Ok(0) => tracing::warn!("a agenda não trouxe nomes; tenta de novo no próximo início"),
+    Ok(n) => tracing::info!(contatos_com_nome_da_agenda = n, "agenda recebida"),
+    Err(e) => tracing::error!(error = %e, "falha ao concluir a tarefa da agenda"),
+  }
+}
+
 async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent) {
   match apply(store, ev).await {
     Ok(out) => {
@@ -82,9 +174,12 @@ async fn handle(store: &Store, events: &broadcast::Sender<ApiEvent>, ev: WaEvent
 pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
   let out = match ev {
     WaEvent::Connection(state) => vec![ApiEvent::ConnectionState { state }],
-    WaEvent::Message(mut msg) => {
+    WaEvent::Message { mut msg, media } => {
       store
         .run(move |db| {
+          if let Some(media) = &media {
+            db.insert_media(&msg.chat_jid, &msg.id, media)?;
+          }
           if !db.insert_message(&msg)? {
             return Ok(vec![]);
           }
@@ -104,9 +199,13 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       meta,
       last_ts,
       messages,
+      media,
     } => {
       store
         .run(move |db| {
+          for (id, m) in &media {
+            db.insert_media(&meta.jid, id, m)?;
+          }
           db.import_history_chat(&meta, last_ts, &messages)?;
           chat_updated(db, &meta.jid)
         })
@@ -120,15 +219,20 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
       store
         .run(move |db| {
           let ids = db.set_status(&chat_jid, &ids, status)?;
-          Ok(if ids.is_empty() {
-            vec![]
-          } else {
-            vec![ApiEvent::MessageStatus {
+          if ids.is_empty() {
+            return Ok(vec![]);
+          }
+          // A lista mostra os tiques da última mensagem: atualiza o chat também.
+          let mut out = chat_updated(db, &chat_jid)?;
+          out.insert(
+            0,
+            ApiEvent::MessageStatus {
               chat_jid,
               ids,
               status,
-            }]
-          })
+            },
+          );
+          Ok(out)
         })
         .await?
     }
@@ -177,6 +281,59 @@ pub async fn apply(store: &Store, ev: WaEvent) -> Result<Vec<ApiEvent>> {
         })
         .await?
     }
+    WaEvent::Revoked { chat_jid, id } => {
+      store
+        .run(move |db| {
+          if !db.revoke_message(&chat_jid, &id)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
+    WaEvent::DeletedForMe { chat_jid, id } => {
+      store
+        .run(move |db| {
+          if !db.delete_message(&chat_jid, &id)? {
+            return Ok(vec![]);
+          }
+          let mut out = vec![ApiEvent::MessageDeleted {
+            chat_jid: chat_jid.clone(),
+            id,
+          }];
+          out.extend(chat_updated(db, &chat_jid)?);
+          Ok(out)
+        })
+        .await?
+    }
+    WaEvent::Starred {
+      chat_jid,
+      id,
+      starred,
+    } => {
+      store
+        .run(move |db| {
+          if !db.set_starred(&chat_jid, &id, starred)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
+    WaEvent::Pinned {
+      chat_jid,
+      id,
+      until_ms,
+    } => {
+      store
+        .run(move |db| {
+          if !db.set_pinned_until(&chat_jid, &id, until_ms)? {
+            return Ok(vec![]);
+          }
+          message_changed(db, &chat_jid, &id)
+        })
+        .await?
+    }
     WaEvent::ChatMeta(meta) => {
       store
         .run(move |db| {
@@ -196,4 +353,15 @@ fn chat_updated(db: &crate::store::Db, jid: &str) -> Result<Vec<ApiEvent>> {
       .into_iter()
       .collect(),
   )
+}
+
+/// A mensagem mudou (estrela, fixação, apagada): manda a versão nova e o chat.
+pub fn message_changed(db: &crate::store::Db, chat_jid: &str, id: &str) -> Result<Vec<ApiEvent>> {
+  let mut out: Vec<ApiEvent> = db
+    .get_message(chat_jid, id)?
+    .map(ApiEvent::MessageUpdated)
+    .into_iter()
+    .collect();
+  out.extend(chat_updated(db, chat_jid)?);
+  Ok(out)
 }

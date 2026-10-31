@@ -56,6 +56,37 @@ pub(super) const MIGRATIONS: &[&str] = &[
    DELETE FROM chats
      WHERE jid LIKE '%@s.whatsapp.net' AND last_msg_ts IS NULL
        AND NOT EXISTS (SELECT 1 FROM messages WHERE chat_jid = chats.jid);",
+  // 3: referência para baixar imagens e figurinhas na hora (o arquivo nunca é guardado).
+  "CREATE TABLE media (
+     chat_jid        TEXT NOT NULL,
+     msg_id          TEXT NOT NULL,
+     kind            TEXT NOT NULL,
+     direct_path     TEXT NOT NULL,
+     media_key       BLOB,
+     file_sha256     BLOB NOT NULL,
+     file_enc_sha256 BLOB,
+     file_length     INTEGER NOT NULL,
+     mimetype        TEXT,
+     width           INTEGER,
+     height          INTEGER,
+     PRIMARY KEY (chat_jid, msg_id)
+   );",
+  // 4: os nomes por telefone migrados na versão 2 eram, quase todos, apelidos (o histórico
+  // os gravou por cima dos nomes da agenda). Voltam a ser apelido, e a agenda é pedida de
+  // novo ao WhatsApp uma vez (tarefa pendente `contacts_resync`).
+  "UPDATE contacts SET push_name = COALESCE(push_name, contact_name), contact_name = NULL
+     WHERE jid LIKE '%@s.whatsapp.net';
+   CREATE TABLE pending_tasks (name TEXT PRIMARY KEY);
+   INSERT INTO pending_tasks (name) VALUES ('contacts_resync');",
+  // 5: vídeo e áudio também são baixados na hora; a duração vai junto com a referência.
+  "ALTER TABLE media ADD COLUMN seconds INTEGER;",
+  // 6: silenciada até (ms desde 1970); -1 = para sempre, NULL/0 = não silenciada.
+  "ALTER TABLE chats ADD COLUMN muted_until INTEGER;",
+  // 7: documentos também são baixados na hora; o nome do arquivo vai junto.
+  "ALTER TABLE media ADD COLUMN file_name TEXT;",
+  // 8: estrela e fixação (ms até quando) por mensagem.
+  "ALTER TABLE messages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE messages ADD COLUMN pinned_until INTEGER;",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

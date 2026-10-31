@@ -2,20 +2,37 @@
 //!
 //! Único arquivo do projeto que importa tipos da biblioteca.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Semaphore};
+use whatsapp_rust::buffa;
+use whatsapp_rust::download::{DownloadParams, MediaType};
+use whatsapp_rust::http::HttpRequest;
+use whatsapp_rust::media::{DocumentOptions, ImageOptions, VideoOptions};
 use whatsapp_rust::prelude::*;
-use whatsapp_rust::wacore::types::events::LazyHistorySync;
+use whatsapp_rust::send::{PinDuration, RevokeType};
+use whatsapp_rust::sync_task::MajorSyncTask;
+use whatsapp_rust::upload::UploadOptions;
+use whatsapp_rust::wacore::appstate::hash::HashState;
+use whatsapp_rust::wacore::appstate::patch_decode::WAPatchName;
+use whatsapp_rust::wacore::iq::mex_operations::fetch_all_newsletters_metadata;
+use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
+use whatsapp_rust::wacore::store::traits::AppSyncStore;
+use whatsapp_rust::wacore::types::events::{LazyHistorySync, UnavailableType};
 use whatsapp_rust::wacore::types::presence::ReceiptType;
+use whatsapp_rust::wacore::types::spam_report::{SpamFlow, SpamReportRequest};
 use whatsapp_rust::wacore_binary::jid::JidExt;
+use whatsapp_rust::MexRequest;
 
-use super::{qr, Sent, UnreadRef, WaEvent, WhatsApp};
-use crate::model::{ChatMeta, ConnState, Contact, Message, MessageKind, MsgStatus};
+use super::{qr, OutgoingMedia, Sent, UnreadRef, WaEvent, WhatsApp};
+use crate::model::{
+  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageAction, MessageKind,
+  MsgStatus, Quote,
+};
 
 pub struct WaOptions {
   pub session_db: PathBuf,
@@ -23,11 +40,33 @@ pub struct WaOptions {
   pub history_msgs_per_chat: usize,
 }
 
+/// Fotos de perfil buscadas ao mesmo tempo (a lista pede várias de uma vez).
+const AVATAR_CONCURRENCY: usize = 4;
+/// Sem resposta nesse tempo, desiste (sem isso uma consulta presa segura a fila).
+const AVATAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
 pub struct RustWa {
   client: Arc<Client>,
   handle: tokio::sync::Mutex<Option<BotHandle>>,
   state: watch::Receiver<ConnState>,
+  avatar_slots: Semaphore,
+  /// Mesma sessão que a lib usa (o `SqliteStore` é um handle clonável).
+  session: SqliteStore,
+  /// QR atual, compartilhado com o [`Translator`].
+  qr: Arc<Mutex<Option<String>>>,
+  /// Canais assinados (jid → dados), buscados uma vez por execução.
+  channels: tokio::sync::Mutex<Option<HashMap<String, Channel>>>,
 }
+
+#[derive(Debug, Clone)]
+struct Channel {
+  name: String,
+  /// Caminho da foto (miniatura) no CDN.
+  picture: Option<String>,
+}
+
+/// Host das fotos de canal (a lista traz só o caminho).
+const CHANNEL_PICTURE_HOST: &str = "https://mmg.whatsapp.net";
 
 /// Conecta (ou pareia, mostrando o QR no terminal) e passa a emitir eventos em `tx`.
 pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn WhatsApp>> {
@@ -38,7 +77,9 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
 
   let (state_tx, state_rx) = watch::channel(ConnState::Connecting);
   let state_tx = Arc::new(state_tx);
+  let qr = Arc::new(Mutex::new(None));
   let ctx = Arc::new(Translator {
+    qr: Arc::clone(&qr),
     tx,
     state: state_tx,
     history_limit: opts.history_msgs_per_chat,
@@ -46,6 +87,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     lids_seen: Mutex::new(HashSet::new()),
   });
 
+  let session = store.clone();
   let bot = Bot::builder()
     .with_backend(store)
     .on_event(move |event, client| {
@@ -62,7 +104,71 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     client,
     handle: tokio::sync::Mutex::new(Some(handle)),
     state: state_rx,
+    avatar_slots: Semaphore::new(AVATAR_CONCURRENCY),
+    session,
+    qr,
+    channels: tokio::sync::Mutex::new(None),
   }))
+}
+
+impl RustWa {
+  /// Canais assinados, da memória ou do WhatsApp (uma consulta traz todos).
+  async fn channel_map(&self) -> Result<HashMap<String, Channel>> {
+    let mut cached = self.channels.lock().await;
+    if let Some(map) = cached.as_ref() {
+      return Ok(map.clone());
+    }
+    // A 0.7.0 manda as variáveis vazias e o servidor responde 400; o WhatsApp Web
+    // (e a lib a partir da próxima versão) manda estas duas como `false`.
+    let vars = fetch_all_newsletters_metadata::Variables {
+      fetch_status_metadata: Some(false),
+      fetch_wamo_sub: Some(false),
+    };
+    let response = self
+      .client
+      .mex()
+      .query(MexRequest::new(
+        fetch_all_newsletters_metadata::NAME,
+        fetch_all_newsletters_metadata::DOC_ID,
+        vars,
+      ))
+      .await
+      .map_err(|e| anyhow!("listando canais: {e:?}"))?;
+    let list = response
+      .data
+      .as_ref()
+      .and_then(|d| d["xwa2_newsletter_subscribed"].as_array())
+      .ok_or_else(|| anyhow!("listando canais: resposta sem a lista"))?;
+    let mut map = HashMap::new();
+    for item in list {
+      let (Some(id), Some(name)) = (
+        normalize(item["id"].as_str()),
+        item["thread_metadata"]["name"]["text"]
+          .as_str()
+          .and_then(non_empty),
+      ) else {
+        continue;
+      };
+      let thread = &item["thread_metadata"];
+      let picture = thread["preview"]["direct_path"]
+        .as_str()
+        .or(thread["picture"]["direct_path"].as_str())
+        .map(str::to_string);
+      map.insert(id, Channel { name, picture });
+    }
+    *cached = Some(map.clone());
+    Ok(map)
+  }
+
+  /// Nosso jid (o de telefone; o `@lid` se ainda não houver).
+  fn own_jid(&self) -> Result<Jid> {
+    self
+      .client
+      .pn()
+      .or_else(|| self.client.lid())
+      .map(|j| j.to_non_ad())
+      .ok_or_else(|| anyhow!("sessão sem jid próprio"))
+  }
 }
 
 #[async_trait]
@@ -71,17 +177,254 @@ impl WhatsApp for RustWa {
     *self.state.borrow()
   }
 
-  async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
+  fn pairing_qr(&self) -> Option<String> {
+    if self.state() != ConnState::WaitingQr {
+      return None;
+    }
+    self.qr.lock().ok().and_then(|q| q.clone())
+  }
+
+  async fn send_text(&self, chat_jid: &str, text: &str, quote: Option<&Quote>) -> Result<Sent> {
     let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let message = match quote {
+      None => wa::Message::text(text),
+      Some(q) => {
+        // A citação leva o texto da original (não guardamos a mensagem crua).
+        let sender = match (&q.sender_jid, q.from_me) {
+          (_, true) => self.own_jid()?,
+          (Some(s), false) => parse_jid(s)?,
+          (None, false) => jid.clone(),
+        };
+        let context =
+          build_quote_context_with_info(&q.id, &sender, &jid, &jid, &wa::Message::text(&q.text));
+        wa::Message::text_with_context(text, context)
+      }
+    };
     let sent = self
       .client
-      .send_message(jid, wa::Message::text(text))
+      .send_message(jid, message)
       .await
       .map_err(|e| anyhow!("falha ao enviar: {e}"))?;
     Ok(Sent {
       id: sent.message_id,
       ts: now_secs(),
     })
+  }
+
+  async fn message_action(&self, msg: &Message, action: MessageAction) -> Result<()> {
+    let chat = parse_jid(&msg.chat_jid)?;
+    // Em grupo, quem mandou identifica a mensagem; nas nossas e em conversa
+    // individual não vai participante.
+    let participant = if (chat.is_group() || chat.is_status_broadcast()) && !msg.from_me {
+      msg.sender_jid.as_deref().map(parse_jid).transpose()?
+    } else {
+      None
+    };
+    let key = wa::MessageKey {
+      remote_jid: Some(chat.to_string()),
+      from_me: Some(msg.from_me),
+      id: Some(msg.id.clone()),
+      participant: participant.as_ref().map(Jid::to_string),
+    };
+    let actions = self.client.chat_actions();
+    match action {
+      MessageAction::Star(true) => actions
+        .star_message(&chat, participant.as_ref(), &msg.id, msg.from_me)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Star(false) => actions
+        .unstar_message(&chat, participant.as_ref(), &msg.id, msg.from_me)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Pin(days) => {
+        let duration = match days {
+          1 => PinDuration::Hours24,
+          30 => PinDuration::Days30,
+          _ => PinDuration::Days7,
+        };
+        self
+          .client
+          .pin_message(chat, key, duration)
+          .await
+          .map_err(|e| anyhow!("{e}"))
+      }
+      MessageAction::Unpin => self
+        .client
+        .unpin_message(chat, key)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::DeleteForMe => actions
+        .delete_message_for_me(
+          &chat,
+          participant.as_ref(),
+          &msg.id,
+          msg.from_me,
+          true,
+          Some(msg.ts * 1000),
+        )
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::DeleteForAll => self
+        .client
+        .revoke_message(chat, msg.id.clone(), RevokeType::Sender)
+        .await
+        .map_err(|e| anyhow!("{e}")),
+      MessageAction::Report => {
+        let sender = match &msg.sender_jid {
+          Some(s) => parse_jid(s)?,
+          None => chat.clone(),
+        };
+        let group = chat.is_group();
+        self
+          .client
+          .send_spam_report(SpamReportRequest {
+            message_id: msg.id.clone(),
+            message_timestamp: u64::try_from(msg.ts).unwrap_or(0),
+            from_jid: Some(if group { chat.clone() } else { sender.clone() }),
+            participant_jid: group.then_some(sender),
+            group_jid: group.then(|| chat.clone()),
+            spam_flow: SpamFlow::MessageMenu,
+            ..Default::default()
+          })
+          .await
+          .map(|_| ())
+          .map_err(|e| anyhow!("{e}"))
+      }
+    }
+  }
+
+  async fn forward(&self, to_jid: &str, msg: &Message, media: Option<&MediaRef>) -> Result<Sent> {
+    let to = parse_jid(to_jid)?;
+    let ctx = || {
+      buffa::MessageField::some(wa::ContextInfo {
+        is_forwarded: Some(true),
+        forwarding_score: Some(1),
+        ..Default::default()
+      })
+    };
+    let caption = msg.body.clone();
+    let message = match media {
+      // Mídia: reaproveita o arquivo que já está no CDN (mesmo caminho e chave).
+      Some(m) => match m.kind {
+        MessageKind::Image => wa::Message {
+          image_message: buffa::MessageField::some(wa::message::ImageMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            caption,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Video => wa::Message {
+          video_message: buffa::MessageField::some(wa::message::VideoMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            seconds: m.seconds,
+            caption,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Audio => wa::Message {
+          audio_message: buffa::MessageField::some(wa::message::AudioMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            seconds: m.seconds,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        MessageKind::Sticker => wa::Message {
+          sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            width: m.width,
+            height: m.height,
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+        _ => wa::Message {
+          document_message: buffa::MessageField::some(wa::message::DocumentMessage {
+            direct_path: Some(m.direct_path.clone()),
+            media_key: m.media_key.clone(),
+            file_sha256: Some(m.file_sha256.clone()),
+            file_enc_sha256: m.file_enc_sha256.clone(),
+            file_length: Some(m.file_length),
+            mimetype: m.mimetype.clone(),
+            file_name: m.file_name.clone(),
+            title: m.file_name.clone(),
+            caption: caption.filter(|c| Some(c) != m.file_name.as_ref()),
+            context_info: ctx(),
+            ..Default::default()
+          }),
+          ..Default::default()
+        },
+      },
+      None => {
+        let text = msg
+          .body
+          .clone()
+          .ok_or_else(|| anyhow!("mensagem sem texto para encaminhar"))?;
+        wa::Message::text_with_context(
+          text,
+          wa::ContextInfo {
+            is_forwarded: Some(true),
+            forwarding_score: Some(1),
+            ..Default::default()
+          },
+        )
+      }
+    };
+    let sent = self
+      .client
+      .send_message(to, message)
+      .await
+      .map_err(|e| anyhow!("falha ao encaminhar: {e}"))?;
+    Ok(Sent {
+      id: sent.message_id,
+      ts: now_secs(),
+    })
+  }
+
+  async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
+    let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let actions = self.client.chat_actions();
+    let res = match action {
+      ChatAction::Archive(true) => actions.archive_chat(&jid, None).await,
+      ChatAction::Archive(false) => actions.unarchive_chat(&jid, None).await,
+      ChatAction::Pin(true) => actions.pin_chat(&jid).await,
+      ChatAction::Pin(false) => actions.unpin_chat(&jid).await,
+      ChatAction::Mute(None) => actions.mute_chat(&jid).await,
+      ChatAction::Mute(Some(until_ms)) => actions.mute_chat_until(&jid, until_ms).await,
+      ChatAction::Unmute => actions.unmute_chat(&jid).await,
+      ChatAction::MarkUnread => actions.mark_chat_as_read(&jid, false, None).await,
+    };
+    res.map_err(|e| anyhow!("{e}"))
   }
 
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()> {
@@ -119,6 +462,189 @@ impl WhatsApp for RustWa {
     Ok(())
   }
 
+  async fn send_media(&self, chat_jid: &str, out: OutgoingMedia) -> Result<(Sent, MediaRef)> {
+    let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let media_type = match out.kind {
+      MessageKind::Image => MediaType::Image,
+      MessageKind::Video => MediaType::Video,
+      _ => MediaType::Document,
+    };
+    let up = self
+      .client
+      .upload(out.bytes, media_type, UploadOptions::default())
+      .await
+      .map_err(|e| anyhow!("subindo arquivo: {e}"))?;
+    let media = MediaRef {
+      kind: out.kind,
+      direct_path: up.direct_path.clone(),
+      media_key: Some(up.media_key.to_vec()),
+      file_sha256: up.file_sha256.to_vec(),
+      file_enc_sha256: Some(up.file_enc_sha256.to_vec()),
+      file_length: up.file_length,
+      mimetype: Some(out.mimetype.clone()),
+      width: out.width,
+      height: out.height,
+      seconds: out.seconds,
+      file_name: out.file_name.clone(),
+    };
+    let mut msg = match out.kind {
+      MessageKind::Image => whatsapp_rust::media::image_message(
+        up,
+        ImageOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          ..Default::default()
+        },
+      ),
+      MessageKind::Video => whatsapp_rust::media::video_message(
+        up,
+        VideoOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          duration_seconds: out.seconds,
+          ..Default::default()
+        },
+      ),
+      _ => whatsapp_rust::media::document_message(
+        up,
+        DocumentOptions {
+          caption: out.caption,
+          mimetype: Some(out.mimetype),
+          title: out.file_name.clone(),
+          file_name: out.file_name,
+          ..Default::default()
+        },
+      ),
+    };
+    // Os construtores da lib não preenchem as dimensões; o celular usa para o layout.
+    if let Some(img) = msg.image_message.as_option_mut() {
+      img.width = out.width;
+      img.height = out.height;
+    }
+    if let Some(vid) = msg.video_message.as_option_mut() {
+      vid.width = out.width;
+      vid.height = out.height;
+    }
+    let sent = self
+      .client
+      .send_message(jid, msg)
+      .await
+      .map_err(|e| anyhow!("falha ao enviar: {e}"))?;
+    Ok((
+      Sent {
+        id: sent.message_id,
+        ts: now_secs(),
+      },
+      media,
+    ))
+  }
+
+  async fn download_media(&self, media: &MediaRef) -> Result<Vec<u8>> {
+    let params = DownloadParams {
+      direct_path: media.direct_path.clone(),
+      media_key: media.media_key.clone(),
+      file_sha256: media.file_sha256.clone(),
+      file_enc_sha256: media.file_enc_sha256.clone(),
+      file_length: media.file_length,
+      media_type: match media.kind {
+        MessageKind::Sticker => MediaType::Sticker,
+        MessageKind::Video => MediaType::Video,
+        MessageKind::Audio => MediaType::Audio,
+        MessageKind::Doc => MediaType::Document,
+        _ => MediaType::Image,
+      },
+    };
+    self
+      .client
+      .download_from_params(&params)
+      .await
+      .map_err(|e| anyhow!("baixando mídia: {e}"))
+  }
+
+  async fn profile_picture(&self, jid: &str) -> Result<Option<Vec<u8>>> {
+    let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let _slot = self.avatar_slots.acquire().await?;
+    let url = if jid.is_newsletter() {
+      let key = jid.to_non_ad_string();
+      match self
+        .channel_map()
+        .await?
+        .get(&key)
+        .and_then(|c| c.picture.clone())
+      {
+        Some(path) => format!("{CHANNEL_PICTURE_HOST}{path}"),
+        None => return Ok(None),
+      }
+    } else if jid.is_pn() || jid.is_lid() || jid.is_group() {
+      match self
+        .client
+        .contacts()
+        .get_profile_picture_with_timeout(&jid, true, Some(AVATAR_TIMEOUT))
+        .await
+        .map_err(|e| anyhow!("buscando foto de perfil: {e}"))?
+      {
+        Some(pic) => pic.url,
+        None => return Ok(None),
+      }
+    } else {
+      // Status não tem foto.
+      return Ok(None);
+    };
+    let resp = tokio::time::timeout(
+      AVATAR_TIMEOUT,
+      self.client.http_client.execute(HttpRequest::get(url)),
+    )
+    .await
+    .map_err(|_| anyhow!("foto de perfil: tempo esgotado"))?
+    .map_err(|e| anyhow!("baixando foto de perfil: {e}"))?;
+    if resp.status_code != 200 {
+      return Err(anyhow!("foto de perfil: HTTP {}", resp.status_code));
+    }
+    Ok(Some(resp.body))
+  }
+
+  async fn resync_contacts(&self) -> Result<()> {
+    // Os contatos ficam na coleção `critical_unblock_low`. A lib só aplica um
+    // snapshot mais novo que a versão guardada, então a versão volta a 0 (como
+    // num aparelho recém-pareado) e o snapshot inteiro é pedido. Ao aplicá-lo a
+    // lib refaz o estado da coleção do zero (ltHash e MACs) e só então grava a
+    // versão nova.
+    let name = WAPatchName::CriticalUnblockLow;
+    self
+      .session
+      .set_version(name.as_str(), HashState::default())
+      .await
+      .map_err(|e| anyhow!("zerando a versão dos contatos: {e}"))?;
+    self
+      .client
+      .process_sync_task(MajorSyncTask::AppStateSync {
+        name,
+        full_sync: true,
+      })
+      .await;
+    Ok(())
+  }
+
+  async fn chat_title(&self, jid: &str) -> Result<Option<String>> {
+    let jid: Jid = jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    if jid.is_newsletter() {
+      let key = jid.to_non_ad_string();
+      return Ok(self.channel_map().await?.get(&key).map(|c| c.name.clone()));
+    }
+    chat_title(&self.client, &jid).await
+  }
+
+  async fn channels(&self) -> Result<Vec<(String, String)>> {
+    Ok(
+      self
+        .channel_map()
+        .await?
+        .into_iter()
+        .map(|(jid, c)| (jid, c.name))
+        .collect(),
+    )
+  }
+
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>> {
     let jid: Jid = lid_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
     Ok(
@@ -139,6 +665,8 @@ impl WhatsApp for RustWa {
 
 /// Converte eventos da biblioteca em [`WaEvent`].
 struct Translator {
+  /// Último QR de pareamento (para a interface); some ao parear.
+  qr: Arc<Mutex<Option<String>>>,
   tx: mpsc::Sender<WaEvent>,
   state: Arc<watch::Sender<ConnState>>,
   history_limit: usize,
@@ -154,7 +682,10 @@ impl Translator {
     tracing::debug!(event = ?event, "evento do WhatsApp");
 
     match event {
-      Event::Connected(_) => self.set_state(ConnState::Connected).await,
+      Event::Connected(_) => {
+        self.set_qr(None);
+        self.set_state(ConnState::Connected).await
+      }
       Event::Disconnected(_) | Event::StreamError(_) | Event::ConnectFailure(_) => {
         self.set_state(ConnState::Disconnected).await
       }
@@ -163,6 +694,7 @@ impl Translator {
         self.set_state(ConnState::LoggedOut).await
       }
       Event::PairingQrCode(qr) => {
+        self.set_qr(Some(qr.code.to_string()));
         self.set_state(ConnState::WaitingQr).await;
         match qr::render(&qr.code) {
           Some(art) => {
@@ -178,10 +710,18 @@ impl Translator {
           None => tracing::error!("não foi possível gerar o QR code"),
         }
       }
-      Event::PairSuccess(_) => tracing::info!("pareamento concluído"),
+      Event::PairSuccess(_) => {
+        self.set_qr(None);
+        tracing::info!("pareamento concluído")
+      }
       Event::Messages(batch) => {
         for inbound in batch.iter() {
-          if let Some(msg) = convert_live(&inbound.message, &inbound.info) {
+          // Apagar para todos e fixar chegam como mensagens de controle.
+          if let Some(ev) = control_event(&inbound.message, &inbound.info) {
+            self.send(ev).await;
+            continue;
+          }
+          if let Some((msg, media)) = convert_live(&inbound.message, &inbound.info) {
             let src = &inbound.info.source;
             self.ensure_group_name(client, &src.chat).await;
             if !msg.from_me {
@@ -208,9 +748,40 @@ impl Translator {
               };
               self.learn_lid(client, &src.chat, alt).await;
             }
-            self.send(WaEvent::Message(msg)).await;
+            self
+              .send(WaEvent::Message {
+                msg,
+                media: media.map(Box::new),
+              })
+              .await;
           }
         }
+      }
+      // Visualização única chega a aparelhos conectados só como aviso, sem conteúdo
+      // (nem chave de mídia): registra a mensagem para a conversa mostrar o aviso.
+      Event::UndecryptableMessage(u) if u.unavailable_type == UnavailableType::ViewOnce => {
+        let src = &u.info.source;
+        self
+          .send(WaEvent::Message {
+            msg: Message {
+              id: u.info.id.to_string(),
+              chat_jid: src.chat.to_non_ad_string(),
+              sender_jid: Some(src.sender.to_non_ad_string()),
+              sender_name: None,
+              from_me: src.is_from_me,
+              ts: u.info.timestamp.timestamp(),
+              kind: MessageKind::ViewOnce,
+              body: None,
+              quoted_id: None,
+              status: src.is_from_me.then_some(MsgStatus::Sent),
+              is_read: src.is_from_me,
+              media: None,
+              starred: false,
+              pinned: false,
+            },
+            media: None,
+          })
+          .await;
       }
       Event::Receipt(r) => {
         let ids: Vec<String> = r.message_ids.iter().map(|id| id.to_string()).collect();
@@ -251,6 +822,37 @@ impl Translator {
             archived: u.action.archived,
             ..Default::default()
           }))
+          .await
+      }
+      Event::MuteUpdate(u) => {
+        let until = if u.action.muted == Some(true) {
+          u.action.mute_end_timestamp.unwrap_or(-1)
+        } else {
+          0
+        };
+        self
+          .send(WaEvent::ChatMeta(ChatMeta {
+            jid: u.jid.to_non_ad_string(),
+            muted_until: Some(until),
+            ..Default::default()
+          }))
+          .await
+      }
+      Event::StarUpdate(u) => {
+        self
+          .send(WaEvent::Starred {
+            chat_jid: u.chat_jid.to_non_ad_string(),
+            id: u.message_id.clone(),
+            starred: u.action.starred.unwrap_or(false),
+          })
+          .await
+      }
+      Event::DeleteMessageForMeUpdate(u) => {
+        self
+          .send(WaEvent::DeletedForMe {
+            chat_jid: u.chat_jid.to_non_ad_string(),
+            id: u.message_id.clone(),
+          })
           .await
       }
       Event::PinUpdate(u) => {
@@ -377,7 +979,7 @@ impl Translator {
     }
   }
 
-  /// Busca o nome (assunto) do grupo uma vez por execução.
+  /// Busca o nome do grupo uma vez por execução.
   async fn ensure_group_name(&self, client: &Arc<Client>, chat: &Jid) {
     if !chat.is_group() {
       return;
@@ -395,20 +997,26 @@ impl Translator {
     let chat = chat.clone();
     let tx = self.tx.clone();
     tokio::spawn(async move {
-      match client.groups().get_metadata(&chat).await {
-        Ok(meta) => {
+      match chat_title(&client, &chat).await {
+        Ok(name) => {
           let _ = tx
             .send(WaEvent::ChatMeta(ChatMeta {
               jid: key,
-              name: non_empty(&meta.subject),
+              name,
               is_group: true,
               ..Default::default()
             }))
             .await;
         }
-        Err(e) => tracing::debug!(error = %e, "falha ao buscar dados do grupo"),
+        Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
       }
     });
+  }
+
+  fn set_qr(&self, code: Option<String>) {
+    if let Ok(mut q) = self.qr.lock() {
+      *q = code;
+    }
   }
 
   async fn set_state(&self, state: ConnState) {
@@ -426,10 +1034,66 @@ impl Translator {
   }
 }
 
-fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<Message> {
-  let (kind, body, quoted_id) = classify(message)?;
+/// Assunto do grupo (consulta ao WhatsApp). Canais vêm de [`RustWa::channel_map`].
+async fn chat_title(client: &Client, jid: &Jid) -> Result<Option<String>> {
+  if !jid.is_group() {
+    return Ok(None);
+  }
+  let meta = client
+    .groups()
+    .get_metadata(jid)
+    .await
+    .map_err(|e| anyhow!("{e}"))?;
+  Ok(non_empty(&meta.subject))
+}
+
+/// Fixação padrão quando a mensagem não diz a duração (a do WhatsApp).
+const DEFAULT_PIN_SECS: i64 = 7 * 24 * 3600;
+
+/// Apagar para todos e fixar/desafixar mensagem.
+fn control_event(message: &wa::Message, info: &MessageInfo) -> Option<WaEvent> {
+  let m = message.get_base_message();
+  let chat_jid = info.source.chat.to_non_ad_string();
+  if let Some(p) = m.protocol_message.as_option() {
+    use wa::message::protocol_message::Type;
+    if p.r#type == Some(Type::REVOKE) {
+      let id = p.key.as_option()?.id.clone()?;
+      return Some(WaEvent::Revoked { chat_jid, id });
+    }
+    return None;
+  }
+  if let Some(pin) = m.pin_in_chat_message.as_option() {
+    use wa::message::pin_in_chat_message::Type;
+    let id = pin.key.as_option()?.id.clone()?;
+    let until_ms = match pin.r#type {
+      Some(Type::PIN_FOR_ALL) => {
+        let secs = message
+          .message_context_info
+          .as_option()
+          .and_then(|c| c.message_add_on_duration_in_secs)
+          .map_or(DEFAULT_PIN_SECS, i64::from);
+        Some((now_secs() + secs) * 1000)
+      }
+      _ => None,
+    };
+    return Some(WaEvent::Pinned {
+      chat_jid,
+      id,
+      until_ms,
+    });
+  }
+  None
+}
+
+fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<(Message, Option<MediaRef>)> {
+  let Classified {
+    kind,
+    body,
+    quoted_id,
+    media,
+  } = classify(message)?;
   let src = &info.source;
-  Some(Message {
+  let msg = Message {
     id: info.id.to_string(),
     chat_jid: src.chat.to_non_ad_string(),
     sender_jid: Some(src.sender.to_non_ad_string()),
@@ -442,7 +1106,11 @@ fn convert_live(message: &wa::Message, info: &MessageInfo) -> Option<Message> {
     status: src.is_from_me.then_some(MsgStatus::Sent),
     // Mensagens nossas (enviadas de outro aparelho) já nascem lidas.
     is_read: src.is_from_me,
-  })
+    media: media.as_ref().map(MediaRef::info),
+    starred: false,
+    pinned: false,
+  };
+  Some((msg, media))
 }
 
 fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent> {
@@ -454,14 +1122,22 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
   let unread = conv.unread_count.unwrap_or(0);
   let marked_unread = conv.marked_as_unread.unwrap_or(false);
 
-  let mut messages: Vec<Message> = conv
+  let mut converted: Vec<(Message, Option<MediaRef>)> = conv
     .messages
     .iter()
     .filter_map(|hm| hm.message.as_option())
     .filter_map(|wmi| convert_history_msg(wmi, &chat_jid, jid.is_group()))
     .collect();
-  messages.sort_by_key(|m| std::cmp::Reverse(m.ts));
-  messages.truncate(limit);
+  converted.sort_by_key(|(m, _)| std::cmp::Reverse(m.ts));
+  converted.truncate(limit);
+  let mut media = Vec::new();
+  let mut messages = Vec::with_capacity(converted.len());
+  for (m, r) in converted {
+    if let Some(r) = r {
+      media.push((m.id.clone(), r));
+    }
+    messages.push(m);
+  }
 
   // As `unread` mensagens recebidas mais recentes são as não lidas.
   let mut left = unread as usize;
@@ -497,10 +1173,22 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
       }),
       archived: conv.archived,
       pinned: conv.pinned.map(|p| p > 0),
+      muted_until: conv.mute_end_time.map(history_mute_ms),
     },
     last_ts,
     messages,
+    media,
   })
+}
+
+/// `muteEndTime` do histórico em ms; aceita segundos (valores pequenos demais para ms).
+fn history_mute_ms(t: u64) -> i64 {
+  let t = i64::try_from(t).unwrap_or(-1);
+  if t > 0 && t < 100_000_000_000 {
+    t * 1000
+  } else {
+    t
+  }
 }
 
 /// Nomes e ligação `@lid` <-> telefone vindos de uma conversa do histórico.
@@ -573,11 +1261,16 @@ fn convert_history_msg(
   wmi: &wa::WebMessageInfo,
   chat_jid: &str,
   is_group: bool,
-) -> Option<Message> {
+) -> Option<(Message, Option<MediaRef>)> {
   let key = wmi.key.as_option()?;
   let id = key.id.clone()?;
   let from_me = key.from_me.unwrap_or(false);
-  let (kind, body, quoted_id) = classify(wmi.message.as_option()?)?;
+  let Classified {
+    kind,
+    body,
+    quoted_id,
+    media,
+  } = classify(wmi.message.as_option()?)?;
   use wa::web_message_info::Status;
   let status = from_me.then_some(match wmi.status {
     Some(Status::READ | Status::PLAYED) => MsgStatus::Read,
@@ -591,7 +1284,7 @@ fn convert_history_msg(
   } else {
     Some(chat_jid.to_string())
   };
-  Some(Message {
+  let msg = Message {
     id,
     chat_jid: chat_jid.to_string(),
     sender_jid,
@@ -606,18 +1299,32 @@ fn convert_history_msg(
     quoted_id,
     status,
     is_read: true,
-  })
+    media: media.as_ref().map(MediaRef::info),
+    starred: false,
+    pinned: false,
+  };
+  Some((msg, media))
 }
 
-/// Tipo, texto/legenda e id citado. `None` para mensagens que não aparecem
-/// na conversa (reações, edições, apagamentos, controle de protocolo).
-fn classify(message: &wa::Message) -> Option<(MessageKind, Option<String>, Option<String>)> {
+struct Classified {
+  kind: MessageKind,
+  /// Texto ou legenda.
+  body: Option<String>,
+  quoted_id: Option<String>,
+  /// Imagem ou figurinha que dá para baixar depois.
+  media: Option<MediaRef>,
+}
+
+/// `None` para mensagens que não aparecem na conversa (reações, edições,
+/// apagamentos, controle de protocolo).
+fn classify(message: &wa::Message) -> Option<Classified> {
   let m = message.get_base_message();
   if m.protocol_message.is_set() || m.reaction_message.is_set() {
     return None;
   }
 
   let caption = m.get_caption().map(str::to_string);
+  let mut media = None;
   let (kind, body, ctx) = if let Some(text) = m.conversation.as_deref() {
     (MessageKind::Text, Some(text.to_string()), None)
   } else if let Some(ext) = m.extended_text_message.as_option() {
@@ -627,15 +1334,77 @@ fn classify(message: &wa::Message) -> Option<(MessageKind, Option<String>, Optio
       ext.context_info.as_option(),
     )
   } else if let Some(x) = m.image_message.as_option() {
+    media = media_ref(
+      MessageKind::Image,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (x.width, x.height, None),
+    );
     (MessageKind::Image, caption, x.context_info.as_option())
-  } else if let Some(x) = m.video_message.as_option() {
+  } else if let Some(x) = m
+    .video_message
+    .as_option()
+    // Vídeo redondo (PTV) usa o mesmo formato de vídeo.
+    .or(m.ptv_message.as_option())
+  {
+    media = media_ref(
+      MessageKind::Video,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (x.width, x.height, x.seconds),
+    );
     (MessageKind::Video, caption, x.context_info.as_option())
   } else if let Some(x) = m.audio_message.as_option() {
+    media = media_ref(
+      MessageKind::Audio,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (None, None, x.seconds),
+    );
     (MessageKind::Audio, None, x.context_info.as_option())
   } else if let Some(x) = m.document_message.as_option() {
+    media = media_ref(
+      MessageKind::Doc,
+      x.direct_path.as_deref(),
+      x.media_key.as_deref(),
+      x.file_sha256.as_deref(),
+      x.file_enc_sha256.as_deref(),
+      x.file_length,
+      x.mimetype.as_deref(),
+      (None, None, None),
+    )
+    .map(|r| MediaRef {
+      file_name: x.file_name.clone(),
+      ..r
+    });
     let body = caption.or_else(|| x.file_name.clone());
     (MessageKind::Doc, body, x.context_info.as_option())
   } else if let Some(x) = m.sticker_message.as_option() {
+    // Figurinhas Lottie (animação vetorial) não são imagem; ficam como texto.
+    if x.is_lottie != Some(true) {
+      media = media_ref(
+        MessageKind::Sticker,
+        x.direct_path.as_deref(),
+        x.media_key.as_deref(),
+        x.file_sha256.as_deref(),
+        x.file_enc_sha256.as_deref(),
+        x.file_length,
+        x.mimetype.as_deref(),
+        (x.width, x.height, None),
+      );
+    }
     (MessageKind::Sticker, None, x.context_info.as_option())
   } else if has_visible_content(m) {
     (MessageKind::Other, None, None)
@@ -643,7 +1412,39 @@ fn classify(message: &wa::Message) -> Option<(MessageKind, Option<String>, Optio
     return None;
   };
   let quoted_id = ctx.and_then(|c| c.stanza_id.clone());
-  Some((kind, body, quoted_id))
+  Some(Classified {
+    kind,
+    body,
+    quoted_id,
+    media,
+  })
+}
+
+/// Referência de download; `None` se faltar o que o CDN exige.
+#[allow(clippy::too_many_arguments)]
+fn media_ref(
+  kind: MessageKind,
+  direct_path: Option<&str>,
+  media_key: Option<&[u8]>,
+  file_sha256: Option<&[u8]>,
+  file_enc_sha256: Option<&[u8]>,
+  file_length: Option<u64>,
+  mimetype: Option<&str>,
+  (width, height, seconds): (Option<u32>, Option<u32>, Option<u32>),
+) -> Option<MediaRef> {
+  Some(MediaRef {
+    kind,
+    direct_path: direct_path.filter(|p| !p.is_empty())?.to_string(),
+    media_key: media_key.map(<[u8]>::to_vec),
+    file_sha256: file_sha256?.to_vec(),
+    file_enc_sha256: file_enc_sha256.map(<[u8]>::to_vec),
+    file_length: file_length?,
+    mimetype: mimetype.map(str::to_string),
+    width,
+    height,
+    seconds,
+    file_name: None,
+  })
 }
 
 /// Outros tipos que aparecem na conversa (localização, contato, enquete...).
@@ -652,10 +1453,13 @@ fn has_visible_content(m: &wa::Message) -> bool {
     || m.live_location_message.is_set()
     || m.contact_message.is_set()
     || m.contacts_array_message.is_set()
-    || m.ptv_message.is_set()
     || m.poll_creation_message.is_set()
     || m.poll_creation_message_v3.is_set()
     || m.event_message.is_set()
+}
+
+fn parse_jid(s: &str) -> Result<Jid> {
+  s.parse().map_err(|e| anyhow!("jid inválido: {e}"))
 }
 
 fn non_empty(s: &str) -> Option<String> {

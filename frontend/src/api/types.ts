@@ -1,4 +1,13 @@
-export type MessageKind = 'text' | 'image' | 'audio' | 'video' | 'doc' | 'sticker' | 'other'
+export type MessageKind =
+  | 'text'
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'doc'
+  | 'sticker'
+  | 'view_once'
+  | 'revoked'
+  | 'other'
 export type MsgStatus = 'sent' | 'delivered' | 'read'
 export type ConnState = 'connecting' | 'waiting_qr' | 'connected' | 'disconnected' | 'logged_out'
 
@@ -12,8 +21,14 @@ export interface Chat {
   unread_count: number
   last_msg_ts: number | null
   last_msg_preview: string | null
+  /** Tiques da última mensagem, quando ela é nossa. */
+  last_status: MsgStatus | null
+  /** Grupos: quem mandou a última mensagem ("Você", nome ou "+telefone"). */
+  last_sender: string | null
   archived: boolean
   pinned: boolean
+  /** Silenciada no celular. */
+  muted: boolean
 }
 
 export interface Message {
@@ -29,6 +44,24 @@ export interface Message {
   quoted_id: string | null
   status: MsgStatus | null
   is_read: boolean
+  /** Presente quando há imagem/figurinha para baixar. */
+  media?: MediaInfo
+  /** Favoritada. */
+  starred: boolean
+  /** Fixada na conversa. */
+  pinned: boolean
+}
+
+export interface MediaInfo {
+  /** Tamanho do arquivo em bytes. */
+  size: number
+  mimetype: string | null
+  width: number | null
+  height: number | null
+  /** Duração em segundos (vídeo e áudio). */
+  seconds: number | null
+  /** Nome do arquivo (documento). */
+  file_name: string | null
 }
 
 export interface MessagesPage {
@@ -40,5 +73,7 @@ export interface MessagesPage {
 export type ServerEvent =
   | { type: 'message.new'; data: Message }
   | { type: 'message.status'; data: { chat_jid: string; ids: string[]; status: MsgStatus } }
+  | { type: 'message.updated'; data: Message }
+  | { type: 'message.deleted'; data: { chat_jid: string; id: string } }
   | { type: 'chat.updated'; data: Chat }
   | { type: 'connection.state'; data: { state: ConnState } }

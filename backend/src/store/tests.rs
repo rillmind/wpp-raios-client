@@ -17,6 +17,9 @@ fn msg(chat: &str, id: &str, ts: i64, from_me: bool, is_read: bool) -> Message {
     quoted_id: None,
     status: from_me.then_some(MsgStatus::Sent),
     is_read,
+    media: None,
+    starred: false,
+    pinned: false,
   }
 }
 
@@ -325,9 +328,124 @@ fn migration_moves_dm_names_to_contacts() {
     vec![
       (GROUP, Some("Família")),
       ("777@lid", None),
-      (LID, Some("José da Silva"))
+      (LID, Some("Zé"))
     ],
-    "entrada só de telefone some; nome mascarado é descartado"
+    "entrada só de telefone some; nome mascarado é descartado; nome por telefone vira apelido"
   );
+
+  // A agenda é pedida de novo uma vez, e o nome que chega dela vence o apelido.
+  assert!(db.has_pending_task("contacts_resync").unwrap());
+  db.upsert_contact(&contact(PN, Some("José da Silva"), None))
+    .unwrap();
+  db.finish_pending_task("contacts_resync").unwrap();
+  assert!(!db.has_pending_task("contacts_resync").unwrap());
+  assert_eq!(
+    db.get_chat(LID).unwrap().unwrap().name.as_deref(),
+    Some("José da Silva")
+  );
+  assert_eq!(db.count_agenda_names().unwrap(), 1);
   std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn chat_list_shows_status_of_last_message_only_when_ours() {
+  let db = db();
+  db.insert_message(&msg(A, "out", 10, true, true)).unwrap();
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_status,
+    Some(MsgStatus::Sent)
+  );
+  db.set_status(A, &["out".into()], MsgStatus::Read).unwrap();
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_status,
+    Some(MsgStatus::Read)
+  );
+  // A resposta do contato vira a última: sem tiques.
+  db.insert_message(&msg(A, "in", 20, false, false)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().last_status, None);
+}
+
+#[test]
+fn pinned_chats_come_first() {
+  let db = db();
+  db.insert_message(&msg(A, "1", 10, false, true)).unwrap();
+  db.insert_message(&msg(B, "2", 20, false, true)).unwrap();
+  db.upsert_chat(&ChatMeta {
+    jid: A.into(),
+    pinned: Some(true),
+    ..Default::default()
+  })
+  .unwrap();
+  let order: Vec<String> = db
+    .list_chats(10, None)
+    .unwrap()
+    .into_iter()
+    .map(|c| c.jid)
+    .collect();
+  assert_eq!(
+    order,
+    vec![A.to_string(), B.to_string()],
+    "fixado vem antes, mesmo mais antigo"
+  );
+}
+
+#[test]
+fn group_list_shows_who_sent_the_last_message() {
+  let db = db();
+  let from = |id: &str, sender: &str, ts: i64| Message {
+    sender_jid: Some(sender.into()),
+    ..msg(GROUP, id, ts, false, true)
+  };
+  db.insert_message(&from("1", LID, 10)).unwrap();
+  db.set_lid_map(LID, PN).unwrap();
+  db.upsert_contact(&contact(PN, Some("José"), None)).unwrap();
+  assert_eq!(
+    db.get_chat(GROUP).unwrap().unwrap().last_sender.as_deref(),
+    Some("José")
+  );
+
+  db.insert_message(&msg(GROUP, "2", 20, true, true)).unwrap();
+  let list = db.list_chats(10, None).unwrap();
+  assert_eq!(list[0].last_sender.as_deref(), Some("Você"));
+
+  // Conversa individual não tem remetente na prévia.
+  db.insert_message(&msg(A, "3", 30, false, true)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().last_sender, None);
+}
+
+#[test]
+fn star_pin_revoke_and_delete_messages() {
+  let mut db = db();
+  db.insert_message(&msg(A, "1", 10, false, true)).unwrap();
+  db.insert_message(&msg(A, "2", 20, false, false)).unwrap();
+
+  assert!(db.set_starred(A, "1", true).unwrap());
+  let future = now_ms() + 60_000;
+  assert!(db.set_pinned_until(A, "1", Some(future)).unwrap());
+  let m = db.get_message(A, "1").unwrap().unwrap();
+  assert!(m.starred && m.pinned);
+  db.set_pinned_until(A, "1", Some(1)).unwrap();
+  assert!(
+    !db.get_message(A, "1").unwrap().unwrap().pinned,
+    "prazo vencido"
+  );
+
+  // Apagada para todos: some o conteúdo, a prévia vira o aviso.
+  assert!(db.revoke_message(A, "2").unwrap());
+  let m = db.get_message(A, "2").unwrap().unwrap();
+  assert_eq!((m.kind, m.body), (MessageKind::Revoked, None));
+  assert_eq!(
+    db.get_chat(A).unwrap().unwrap().last_msg_preview.as_deref(),
+    Some("[mensagem apagada]")
+  );
+
+  // Apagada para mim: sai, a não lida sai do contador e a prévia volta à anterior.
+  db.insert_message(&msg(A, "3", 30, false, false)).unwrap();
+  assert_eq!(db.get_chat(A).unwrap().unwrap().unread_count, 2);
+  assert!(db.delete_message(A, "3").unwrap());
+  assert!(db.get_message(A, "3").unwrap().is_none());
+  let chat = db.get_chat(A).unwrap().unwrap();
+  assert_eq!(chat.unread_count, 1);
+  assert_eq!(chat.last_msg_preview.as_deref(), Some("[mensagem apagada]"));
+  assert!(!db.delete_message(A, "nao-existe").unwrap());
 }
