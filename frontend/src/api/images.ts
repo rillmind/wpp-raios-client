@@ -18,7 +18,7 @@ export function loadImage(path: string): Promise<string | null> {
 
 export type ImageState = { status: 'idle' | 'loading' | 'none' | 'error' } | { status: 'ready'; url: string }
 
-/** Baixa `path` quando `enabled` (ex.: o elemento apareceu na tela). */
+/** Baixa `path` quando `enabled` (ex.: o elemento apareceu na tela ou a pessoa clicou). */
 export function useImage(path: string, enabled: boolean): ImageState {
   const [state, setState] = useState<{ path: string; value: ImageState }>({ path, value: { status: 'idle' } })
   useEffect(() => {

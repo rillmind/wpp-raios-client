@@ -35,6 +35,15 @@ export function senderName(m: Message): string {
   return m.sender_name.startsWith('+') ? formatPhone(m.sender_name.slice(1)) : m.sender_name
 }
 
+const decimal = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
+
+/** "820 B", "340 KB", "2,4 MB". */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${decimal.format(n / (1024 * 1024))} MB`
+}
+
 const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
 const day = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
 

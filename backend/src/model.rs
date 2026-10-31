@@ -103,9 +103,11 @@ pub struct Message {
   pub media: Option<MediaInfo>,
 }
 
-/// O que o front precisa para reservar espaço antes de baixar a mídia.
+/// O que o front mostra antes de baixar a mídia (só baixa quando pedem).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MediaInfo {
+  /// Tamanho do arquivo em bytes.
+  pub size: u64,
   pub mimetype: Option<String>,
   pub width: Option<u32>,
   pub height: Option<u32>,
@@ -131,6 +133,7 @@ pub struct MediaRef {
 impl MediaRef {
   pub fn info(&self) -> MediaInfo {
     MediaInfo {
+      size: self.file_length,
       mimetype: self.mimetype.clone(),
       width: self.width,
       height: self.height,

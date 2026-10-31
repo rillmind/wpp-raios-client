@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { useImage } from '../api/images'
-import { useInView } from '../api/useInView'
 import type { Message } from '../api/types'
+import { formatBytes } from './format'
 
 const MAX_W = 280
 const MAX_H = 320
@@ -15,37 +15,77 @@ function boxSize(m: Message): { width: number; height: number } {
   const h = m.media?.height ?? 0
   if (!w || !h) return { width: MAX_W, height: Math.round(MAX_W * 0.75) }
   const scale = Math.min(MAX_W / w, MAX_H / h, 1)
-  return { width: Math.round(w * scale), height: Math.round(h * scale) }
+  return { width: Math.max(Math.round(w * scale), 160), height: Math.max(Math.round(h * scale), 90) }
 }
 
-/** Imagem ou figurinha de uma mensagem, baixada quando aparece na tela. */
+/**
+ * Imagem ou figurinha de uma mensagem. Só baixa quando a pessoa clica; o arquivo
+ * fica na memória da aba (ver `api/images.ts`).
+ */
 export function MediaView({ chatJid, message }: { chatJid: string; message: Message }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const visible = useInView(ref)
-  const img = useImage(api.mediaPath(chatJid, message.id), visible)
-  const [zoom, setZoom] = useState(false)
-  const size = boxSize(message)
+  // Cada tentativa remonta o download (uma falha não fica em cache).
+  const [attempt, setAttempt] = useState(0)
   const sticker = message.kind === 'sticker'
   const label = sticker ? 'Figurinha' : 'Imagem'
+  const size = boxSize(message)
 
   return (
-    <div ref={ref} className={sticker ? 'media media--sticker' : 'media'} style={size}>
-      {img.status === 'ready' ? (
-        sticker ? (
-          <img src={img.url} alt={label} />
-        ) : (
-          <button type="button" className="media__open" onClick={() => setZoom(true)} aria-label="Ampliar imagem">
-            <img src={img.url} alt={label} />
-          </button>
-        )
+    <div className={sticker ? 'media media--sticker' : 'media'} style={size}>
+      {attempt === 0 ? (
+        <button type="button" className="media__download" onClick={() => setAttempt(1)}>
+          <span className="media__icon" aria-hidden="true">
+            ↓
+          </span>
+          <span>
+            {label}
+            {message.media?.size ? ` · ${formatBytes(message.media.size)}` : ''}
+          </span>
+          <span className="media__hint">Clique para baixar</span>
+        </button>
       ) : (
-        <span className="media__placeholder">
-          {img.status === 'none' || img.status === 'error' ? `${label} indisponível` : 'Carregando…'}
-        </span>
+        <Download
+          key={attempt}
+          path={api.mediaPath(chatJid, message.id)}
+          label={label}
+          sticker={sticker}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
       )}
-      {zoom && img.status === 'ready' && <Lightbox url={img.url} onClose={() => setZoom(false)} />}
     </div>
   )
+}
+
+interface DownloadProps {
+  path: string
+  label: string
+  sticker: boolean
+  onRetry: () => void
+}
+
+function Download({ path, label, sticker, onRetry }: DownloadProps) {
+  const img = useImage(path, true)
+  const [zoom, setZoom] = useState(false)
+
+  if (img.status === 'ready') {
+    if (sticker) return <img src={img.url} alt={label} />
+    return (
+      <>
+        <button type="button" className="media__open" onClick={() => setZoom(true)} aria-label="Ampliar imagem">
+          <img src={img.url} alt={label} />
+        </button>
+        {zoom && <Lightbox url={img.url} onClose={() => setZoom(false)} />}
+      </>
+    )
+  }
+  if (img.status === 'none' || img.status === 'error') {
+    return (
+      <button type="button" className="media__download" onClick={onRetry}>
+        <span>{label} indisponível</span>
+        <span className="media__hint">Clique para tentar de novo</span>
+      </button>
+    )
+  }
+  return <span className="media__placeholder">Baixando…</span>
 }
 
 function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {

@@ -527,7 +527,7 @@ fn msg_select() -> String {
   format!(
     "SELECT m.id, m.chat_jid, m.sender_jid, m.from_me, m.ts, m.kind, m.body, m.quoted_id,
        m.status, m.is_read, {},
-       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height
+       md.msg_id IS NOT NULL, md.mimetype, md.width, md.height, md.file_length
      FROM messages m
      LEFT JOIN media md ON md.chat_jid = m.chat_jid AND md.msg_id = m.id
      LEFT JOIN lid_map sm ON sm.lid = m.sender_jid
@@ -573,7 +573,9 @@ fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
     status: status.as_deref().and_then(MsgStatus::parse),
     is_read: r.get(9)?,
     media: if r.get(12)? {
+      let size: i64 = r.get(16)?;
       Some(MediaInfo {
+        size: u64::try_from(size).unwrap_or(0),
         mimetype: r.get(13)?,
         width: r.get(14)?,
         height: r.get(15)?,

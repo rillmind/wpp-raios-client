@@ -34,6 +34,8 @@ export interface Message {
 }
 
 export interface MediaInfo {
+  /** Tamanho do arquivo em bytes. */
+  size: number
   mimetype: string | null
   width: number | null
   height: number | null

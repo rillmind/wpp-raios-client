@@ -514,7 +514,7 @@ async fn media_is_downloaded_on_demand_and_not_cached() {
   let msgs = json["messages"].as_array().unwrap();
   assert_eq!(
     msgs[0]["media"],
-    json!({ "mimetype": "image/jpeg", "width": 800, "height": 600 })
+    json!({ "size": 10, "mimetype": "image/jpeg", "width": 800, "height": 600 })
   );
   assert!(msgs[2].get("media").is_none(), "texto não tem mídia");
 

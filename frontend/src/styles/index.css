@@ -491,6 +491,42 @@ code {
 .media--sticker img {
   object-fit: contain;
 }
+.media__download {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem;
+  border: 0;
+  color: var(--fg);
+  background: var(--ctp-surface0);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.media__download:hover {
+  background: var(--ctp-surface1);
+}
+.media--sticker .media__download {
+  border-radius: 6px;
+}
+.media__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--ctp-surface2);
+  font-size: 1.1rem;
+}
+.media__hint {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
 .media__open {
   display: block;
   width: 100%;

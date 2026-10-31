@@ -11,10 +11,11 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 - Mostra o nome de cada contato como está na agenda do seu celular; sem nome salvo, o nome que a
   pessoa definiu no WhatsApp; sem nenhum dos dois, o número. Em grupos, mostra quem mandou cada
   mensagem.
-- Mostra as fotos de perfil e as imagens e figurinhas das conversas (menos as figurinhas
-  animadas vetoriais, que aparecem como `[figurinha]`). Elas são baixadas do
-  WhatsApp na hora em que aparecem na tela e ficam só na memória da aba: nada vai para o disco
-  nem para o banco (o banco guarda só a referência para baixar). Fechou a aba, sumiram.
+- Mostra as fotos de perfil, que carregam sozinhas.
+- Imagens e figurinhas aparecem como um botão com o tamanho do arquivo; só são baixadas do
+  WhatsApp quando você clica. Ficam só na memória da aba: nada vai para o disco nem para o banco
+  (o banco guarda só a referência para baixar). Fechou a aba, sumiram. Figurinhas animadas
+  vetoriais aparecem como `[figurinha]`, e imagens recebidas antes desta versão como `[imagem]`.
 - Abre a conversa na primeira mensagem não lida, com um separador.
 - Envia mensagens de texto (Enter envia, Shift+Enter quebra linha).
 - Marca como lida só quando você clica em "Marcar como lida", porque o contato vê o recibo; a
