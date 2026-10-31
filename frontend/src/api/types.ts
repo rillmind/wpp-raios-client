@@ -4,7 +4,10 @@ export type ConnState = 'connecting' | 'waiting_qr' | 'connected' | 'disconnecte
 
 export interface Chat {
   jid: string
+  /** Grupo: assunto. Individual: nome da agenda, senão o apelido. */
   name: string | null
+  /** Só dígitos, quando conhecido (conversas individuais). */
+  phone: string | null
   is_group: boolean
   unread_count: number
   last_msg_ts: number | null
@@ -17,6 +20,8 @@ export interface Message {
   id: string
   chat_jid: string
   sender_jid: string | null
+  /** Agenda, apelido ou "+telefone" do remetente. */
+  sender_name?: string
   from_me: boolean
   ts: number
   kind: MessageKind

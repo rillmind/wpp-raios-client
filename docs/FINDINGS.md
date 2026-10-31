@@ -96,11 +96,13 @@ Várias fontes, todas tratadas como `WaEvent::ChatMeta` (só sobrescrevem quando
   `tokio-transport`, `tokio-runtime`, `ureq-client`, `tokio-native`, `signal`.
 - **Logs:** a lib usa a crate `log`; o `tracing-subscriber` repassa. O `Debug` de `Event` imprime
   só o nome da variante, então dá para logar todos os eventos em `debug` sem vazar conteúdo.
-- **LID x telefone:** o WhatsApp migra contatos para endereços `@lid`. Uma mesma conversa pode
-  aparecer com JID `@s.whatsapp.net` na sincronização e `@lid` ao vivo (ou o contrário), gerando
-  chats duplicados. `MessageSource.sender_alt` / `recipient_alt` e
-  `HistorySync.phoneNumberToLidMappings` permitem unificar; **ainda não implementado**, conferir no
-  pareamento real.
+- **LID x telefone (visto no pareamento real):** todas as conversas individuais e quase todos os
+  remetentes em grupos chegam como `@lid`, enquanto os nomes da agenda (`Event::ContactUpdate`)
+  chegam pelo jid de telefone. Por isso os nomes ficam em `contacts` (agenda e apelido separados) e
+  a ligação em `lid_map`, alimentada por `MessageSource.sender_alt`/`recipient_alt`,
+  `ContactAction.lidJid`/`pnJid`, `Conversation.lidJid`/`pnJid` e, para o que já estava gravado,
+  `Client::get_lid_pn_entry` (tabela `lid_pn_mapping` da sessão, consultada sem rede). Não houve
+  chats duplicados: as entradas por telefone eram só nomes, sem mensagens.
 - **Desligamento:** `BotHandle::shutdown()` grava o estado pendente da sessão antes de fechar.
   Depois do desligamento intencional a lib ainda loga "reconnecting immediately", mas o loop termina.
 - A lib também tem `shutdown_signal()` (SIGINT + SIGTERM), usado no `main`.

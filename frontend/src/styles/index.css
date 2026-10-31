@@ -112,6 +112,16 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.topbar__name,
+.topbar__sub {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar__sub {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
 .topbar__back {
   display: none;
 }
