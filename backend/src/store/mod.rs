@@ -228,6 +228,23 @@ impl Db {
     Ok(())
   }
 
+  /// Conversas que têm alguma destas mensagens ainda não lida.
+  pub fn chats_with_unread_ids(&self, ids: &[String]) -> Result<Vec<String>> {
+    let mut stmt = self
+      .conn
+      .prepare("SELECT DISTINCT chat_jid FROM messages WHERE id = ?1 AND is_read = 0")?;
+    let mut chats: Vec<String> = Vec::new();
+    for id in ids {
+      for jid in stmt.query_map(params![id], |r| r.get(0))? {
+        let jid = jid?;
+        if !chats.contains(&jid) {
+          chats.push(jid);
+        }
+      }
+    }
+    Ok(chats)
+  }
+
   /// Atualiza o status de mensagens enviadas, sem regredir (read > delivered > sent).
   pub fn set_status(
     &self,

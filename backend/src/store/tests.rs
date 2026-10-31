@@ -149,6 +149,16 @@ fn mark_messages_read_from_other_device() {
 }
 
 #[test]
+fn finds_chats_of_unread_ids() {
+  let db = db();
+  db.insert_message(&msg(A, "1", 100, false, false)).unwrap();
+  db.insert_message(&msg(A, "2", 200, false, true)).unwrap();
+  let ids = vec!["1".to_string(), "2".to_string(), "x".to_string()];
+  assert_eq!(db.chats_with_unread_ids(&ids).unwrap(), vec![A.to_string()]);
+  assert!(db.chats_with_unread_ids(&["2".into()]).unwrap().is_empty());
+}
+
+#[test]
 fn status_never_regresses() {
   let db = db();
   db.insert_message(&msg(A, "1", 100, true, true)).unwrap();

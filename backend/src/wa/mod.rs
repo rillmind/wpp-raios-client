@@ -66,8 +66,9 @@ pub enum WaEvent {
     status: MsgStatus,
   },
   /// Mensagens recebidas foram lidas em outro aparelho nosso (celular).
+  /// `chat_jid` é `None` quando o recibo não diz a conversa: aí ela sai pelo id das mensagens.
   ReadElsewhere {
-    chat_jid: String,
+    chat_jid: Option<String>,
     ids: Vec<String>,
   },
   /// Chat marcado como lido/não lido em outro aparelho.
