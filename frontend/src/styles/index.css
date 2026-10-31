@@ -154,6 +154,7 @@ code {
 .sidebar {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
@@ -539,14 +540,37 @@ code {
 
 /* Mobile: uma tela por vez */
 @media (max-width: 720px) {
+  /* Celular: lista na tela toda e as seções numa barra embaixo. `minmax(0, …)`
+     impede que uma prévia longa (sem quebra de linha) estique a tela. */
   .app {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: 'list' 'nav';
+  }
+  .sidebar {
+    grid-area: list;
+    border-right: 0;
+  }
+  .rail {
+    grid-area: nav;
+    flex-direction: row;
+    justify-content: space-around;
+    padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-top: 1px solid var(--border);
+  }
+  .rail__sep {
+    display: none;
   }
   .main {
     display: none;
   }
   .app--chat-open {
-    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: 'main';
+  }
+  .app--chat-open .main {
+    grid-area: main;
   }
   .app--chat-open .rail,
   .app--chat-open .sidebar {
