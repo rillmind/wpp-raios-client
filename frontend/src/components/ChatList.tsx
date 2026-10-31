@@ -8,9 +8,11 @@ interface Props {
   chats: Chat[]
   selected: string | null
   onSelect: (jid: string) => void
+  /** Botão direito (ou toque longo) numa conversa. */
+  onMenu: (chat: Chat, x: number, y: number) => void
 }
 
-export function ChatList({ chats, selected, onSelect }: Props) {
+export function ChatList({ chats, selected, onSelect, onMenu }: Props) {
   if (chats.length === 0) {
     return <p className="empty">Nenhuma conversa ainda. Elas aparecem aqui assim que chegarem.</p>
   }
@@ -23,6 +25,10 @@ export function ChatList({ chats, selected, onSelect }: Props) {
             className="chat-item"
             aria-selected={c.jid === selected}
             onClick={() => onSelect(c.jid)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              onMenu(c, e.clientX, e.clientY)
+            }}
           >
             <Avatar jid={c.jid} name={chatName(c)} />
             <span className="chat-item__body">
@@ -45,6 +51,18 @@ export function ChatList({ chats, selected, onSelect }: Props) {
                   {c.last_sender && c.last_msg_preview && `${formatPerson(c.last_sender)}: `}
                   {c.last_msg_preview ?? ''}
                 </span>
+                {c.muted && (
+                  <svg className="chat-item__pin" viewBox="0 0 24 24" width="16" height="16" aria-label="Silenciada">
+                    <path
+                      d="M6 16V11a6 6 0 0 1 9-5.2M18 11v5l1.5 2H6M10 20a2 2 0 0 0 4 0M4 4l16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                )}
                 {c.pinned && (
                   <svg className="chat-item__pin" viewBox="0 0 24 24" width="16" height="16" aria-label="Fixada">
                     <path

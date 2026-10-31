@@ -3,6 +3,7 @@ import { api, ApiError, getToken, setToken } from './api/client'
 import type { Chat, ConnState, ServerEvent } from './api/types'
 import { useEvents } from './api/useEvents'
 import { ChatList } from './components/ChatList'
+import { ChatMenu, type MenuAction } from './components/ChatMenu'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
 import { usePairing } from './api/usePairing'
@@ -70,6 +71,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [conv, setConv] = useState<ConvState | null>(null)
   const [section, setSection] = useState<Section>('chats')
+  const [menu, setMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [noRead, setNoRead] = useState(loadNoRead)
   const autoRead = !noRead
   const selectedRef = useRef(selected)
@@ -182,6 +185,25 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selected, closeChat])
 
+  const closeMenu = useCallback(() => setMenu(null), [])
+
+  // Aviso curto quando uma ação do menu falha (ex.: WhatsApp desconectado).
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(t)
+  }, [notice])
+
+  async function pickAction(chat: Chat, pick: MenuAction) {
+    if (pick.action === 'read') return markRead(chat.jid)
+    try {
+      const updated = await api.action(chat.jid, pick.action, pick.action === 'mute' ? pick.hours : undefined)
+      setChats((cs) => cs.map((c) => (c.jid === updated.jid ? updated : c)).sort(byActivity))
+    } catch (e) {
+      setNotice(fail(e))
+    }
+  }
+
   // Status é uma conversa só: o botão abre ela direto.
   function chooseSection(s: Section) {
     setSection(s)
@@ -269,7 +291,26 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
           <span className="conn__dot" aria-hidden="true" />
           {connText}
         </p>
-        <ChatList chats={visible} selected={selected} onSelect={select} />
+        <ChatList
+          chats={visible}
+          selected={selected}
+          onSelect={select}
+          onMenu={(chat, x, y) => setMenu({ chat, x, y })}
+        />
+        {menu && (
+          <ChatMenu
+            chat={menu.chat}
+            x={menu.x}
+            y={menu.y}
+            onClose={closeMenu}
+            onPick={(pick) => void pickAction(menu.chat, pick)}
+          />
+        )}
+        {notice && (
+          <p className="notice" role="alert">
+            {notice}
+          </p>
+        )}
       </aside>
 
       <main className="main">

@@ -9,7 +9,7 @@ mod whatsapp_rust_impl;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::model::{ChatMeta, ConnState, Contact, MediaRef, Message, MsgStatus};
+use crate::model::{ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MsgStatus};
 
 pub use qr::svg as qr_svg;
 pub use whatsapp_rust_impl::{start, WaOptions};
@@ -81,6 +81,9 @@ pub trait WhatsApp: Send + Sync {
 
   /// Envia uma mensagem de texto.
   async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent>;
+
+  /// Arquiva, fixa, silencia ou marca como não lida, também no celular.
+  async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()>;
 
   /// Envia recibos de leitura e marca o chat como lido nos outros aparelhos.
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()>;

@@ -18,6 +18,8 @@ export interface Chat {
   last_sender: string | null
   archived: boolean
   pinned: boolean
+  /** Silenciada no celular. */
+  muted: boolean
 }
 
 export interface Message {

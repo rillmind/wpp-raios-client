@@ -80,6 +80,8 @@ pub(super) const MIGRATIONS: &[&str] = &[
    INSERT INTO pending_tasks (name) VALUES ('contacts_resync');",
   // 5: vídeo e áudio também são baixados na hora; a duração vai junto com a referência.
   "ALTER TABLE media ADD COLUMN seconds INTEGER;",
+  // 6: silenciada até (ms desde 1970); -1 = para sempre, NULL/0 = não silenciada.
+  "ALTER TABLE chats ADD COLUMN muted_until INTEGER;",
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

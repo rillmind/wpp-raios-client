@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::*;
-use crate::model::{ConnState, MediaRef, Message, MessageKind};
+use crate::model::{ChatAction, ConnState, MediaRef, Message, MessageKind};
 use crate::store::Db;
 use crate::wa::{Sent, UnreadRef};
 
@@ -24,6 +24,7 @@ struct FakeWa {
   sent: Mutex<Vec<(String, String)>>,
   read: Mutex<Vec<(String, Vec<String>)>>,
   offline: bool,
+  actions: Mutex<Vec<(String, ChatAction)>>,
   /// Com QR: o "WhatsApp" está esperando o pareamento.
   qr: Option<String>,
 }
@@ -51,6 +52,11 @@ impl WhatsApp for FakeWa {
       id: format!("out-{}", sent.len()),
       ts: 1_000,
     })
+  }
+
+  async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
+    self.actions.lock().unwrap().push((chat_jid.into(), action));
+    Ok(())
   }
 
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()> {
@@ -653,4 +659,60 @@ async fn video_and_audio_get_safe_types() {
     assert_eq!(ct.as_deref(), Some(want), "{id}");
     assert_eq!(cc.as_deref(), Some("no-store"), "{id}");
   }
+}
+
+async fn act(h: &Harness, action: &str, hours: Option<u32>) -> (StatusCode, Value) {
+  let body = match hours {
+    Some(hours) => json!({ "action": action, "hours": hours }),
+    None => json!({ "action": action }),
+  };
+  call(h, "POST", &format!("/api/chats/{A}/action"), Some(body)).await
+}
+
+#[tokio::test]
+async fn chat_actions_go_to_whatsapp_then_to_the_list() {
+  let h = harness();
+  seed(&h, vec![incoming("1", 10, true)]).await;
+  let (status, chat) = act(&h, "pin", None).await;
+  assert_eq!(status, StatusCode::OK);
+  assert_eq!(chat["pinned"], true);
+
+  let (_, chat) = act(&h, "archive", None).await;
+  assert_eq!(chat["archived"], true);
+  assert_eq!(chat["pinned"], false, "arquivar desafixa");
+
+  let (_, chat) = act(&h, "mute", Some(8)).await;
+  assert_eq!(chat["muted"], true);
+  let (_, chat) = act(&h, "unmute", None).await;
+  assert_eq!(chat["muted"], false);
+  let (_, chat) = act(&h, "mute", None).await;
+  assert_eq!(chat["muted"], true, "para sempre");
+
+  let (_, chat) = act(&h, "unread", None).await;
+  assert_eq!(chat["unread_count"], 1);
+
+  let sent: Vec<ChatAction> = h
+    .wa
+    .actions
+    .lock()
+    .unwrap()
+    .iter()
+    .map(|(_, a)| *a)
+    .collect();
+  assert_eq!(sent.len(), 6);
+  assert!(matches!(sent[2], ChatAction::Mute(Some(_))));
+  assert_eq!(sent[4], ChatAction::Mute(None));
+
+  let (status, _) = act(&h, "apagar", None).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (status, _) = act(&h, "mute", Some(0)).await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  let (status, _) = call(
+    &h,
+    "POST",
+    "/api/chats/999@s.whatsapp.net/action",
+    Some(json!({ "action": "pin" })),
+  )
+  .await;
+  assert_eq!(status, StatusCode::NOT_FOUND);
 }

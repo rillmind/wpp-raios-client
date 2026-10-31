@@ -80,6 +80,12 @@ export const api = {
       `/api/chats/${enc(jid)}/messages${before != null ? `?before=${before}&limit=50` : ''}`,
     ),
   markRead: (jid: string) => request<Chat>(`/api/chats/${enc(jid)}/read`, { method: 'POST' }),
+  /** Arquiva, fixa, silencia (por `hours`, ou para sempre) ou marca como não lida. */
+  action: (jid: string, action: string, hours?: number) =>
+    request<Chat>(`/api/chats/${enc(jid)}/action`, {
+      method: 'POST',
+      body: JSON.stringify(hours ? { action, hours } : { action }),
+    }),
   send: (jid: string, text: string) =>
     request<Message>(`/api/chats/${enc(jid)}/send`, {
       method: 'POST',

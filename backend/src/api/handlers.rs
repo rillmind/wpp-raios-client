@@ -13,7 +13,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use super::error::{ApiError, ApiResult};
 use super::{ApiEvent, AppState};
-use crate::model::{ConnState, Message, MessageKind, MsgStatus};
+use crate::model::{ChatAction, ConnState, Message, MessageKind, MsgStatus};
 use crate::store::ChatSummary;
 use crate::wa::UnreadRef;
 
@@ -169,6 +169,62 @@ pub async fn mark_read(
     .ok_or(ApiError::NotFound)?;
   let _ = st.events.send(ApiEvent::ChatUpdated(chat.clone()));
   Ok(Json(chat))
+}
+
+#[derive(Deserialize)]
+pub struct ActionBody {
+  /// `archive`, `unarchive`, `pin`, `unpin`, `mute`, `unmute` ou `unread`.
+  action: String,
+  /// Só para `mute`: por quantas horas (sem isso, para sempre).
+  hours: Option<u32>,
+}
+
+/// Arquiva, fixa, silencia ou marca como não lida, no WhatsApp e depois no banco.
+pub async fn chat_action(
+  State(st): State<AppState>,
+  Path(jid): Path<String>,
+  Json(body): Json<ActionBody>,
+) -> ApiResult<Json<ChatSummary>> {
+  validate_jid(&jid)?;
+  let action = match (body.action.as_str(), body.hours) {
+    ("archive", _) => ChatAction::Archive(true),
+    ("unarchive", _) => ChatAction::Archive(false),
+    ("pin", _) => ChatAction::Pin(true),
+    ("unpin", _) => ChatAction::Pin(false),
+    ("mute", None) => ChatAction::Mute(None),
+    ("mute", Some(h @ 1..=8760)) => ChatAction::Mute(Some(now_ms() + i64::from(h) * 3_600_000)),
+    ("mute", Some(_)) => return Err(ApiError::BadRequest("hours entre 1 e 8760".into())),
+    ("unmute", _) => ChatAction::Unmute,
+    ("unread", _) => ChatAction::MarkUnread,
+    _ => return Err(ApiError::BadRequest("ação desconhecida".into())),
+  };
+  let j = jid.clone();
+  if st.store.run(move |db| db.get_chat(&j)).await?.is_none() {
+    return Err(ApiError::NotFound);
+  }
+  ensure_connected(&st)?;
+  // Primeiro no WhatsApp: se falhar, o banco local continua igual ao celular.
+  st.wa
+    .chat_action(&jid, action)
+    .await
+    .map_err(ApiError::Upstream)?;
+  let chat = st
+    .store
+    .run(move |db| {
+      db.apply_action(&jid, action)?;
+      db.get_chat(&jid)
+    })
+    .await?
+    .ok_or(ApiError::NotFound)?;
+  let _ = st.events.send(ApiEvent::ChatUpdated(chat.clone()));
+  Ok(Json(chat))
+}
+
+fn now_ms() -> i64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0)
 }
 
 #[derive(Deserialize)]

@@ -6,7 +6,8 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
 
 - Fica conectado ao WhatsApp como um aparelho vinculado (como o WhatsApp Web) e grava as
   conversas num banco SQLite próprio. A interface lê desse banco, por isso abre na hora.
-- Lista as conversas por atividade, com as fixadas no celular no topo (com um alfinete), o
+- Lista as conversas por atividade, com as fixadas no celular no topo (com um alfinete) e um sino
+  cortado nas silenciadas, o
   contador de não lidas, o estado da conexão no topo e, quando a última mensagem é sua, os tiques
   dela (✓ enviada, ✓✓ entregue, ✓✓ azul lida). Em grupos a prévia diz quem mandou a última
   mensagem ("Carlos: …", "Você: …").
@@ -29,6 +30,10 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   tela inicial; com uma imagem ampliada, Esc fecha só a imagem.
 - Envia mensagens de texto (Enter envia, Shift+Enter quebra linha). Cada conversa tem o seu
   rascunho: trocar de conversa não leva o texto junto.
+- Botão direito numa conversa da lista (toque longo no Android) abre um menu para arquivar ou
+  desarquivar, fixar ou desafixar, silenciar (8 horas, 1 semana ou para sempre) ou reativar o som
+  e marcar como lida ou não lida. Tudo vale também no celular. Apagar ou limpar conversa não
+  existe aqui, de propósito.
 - Ao abrir uma conversa, marca as mensagens como lidas (o contato vê os tiques azuis e o contador
   zera no celular também). Com a opção **"Não visualizar ao abrir"** marcada, no topo da lista,
   abrir não marca nada: só o botão "Marcar como lida" faz isso.

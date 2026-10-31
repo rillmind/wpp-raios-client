@@ -52,6 +52,7 @@ pub fn router(
     .route("/api/chats", get(handlers::list_chats))
     .route("/api/chats/{jid}/messages", get(handlers::messages))
     .route("/api/chats/{jid}/read", post(handlers::mark_read))
+    .route("/api/chats/{jid}/action", post(handlers::chat_action))
     .route("/api/chats/{jid}/send", post(handlers::send))
     .route("/api/chats/{jid}/avatar", get(handlers::avatar))
     .route("/api/chats/{jid}/messages/{id}/media", get(handlers::media))

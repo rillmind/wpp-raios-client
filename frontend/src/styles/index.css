@@ -740,3 +740,46 @@ code {
   max-height: 100%;
   object-fit: contain;
 }
+
+/* Menu do botão direito */
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 200px;
+  margin: 0;
+  padding: 0.3rem 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--ctp-surface0);
+  box-shadow: 0 6px 24px rgb(17 17 27 / 0.5);
+}
+.menu__item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border: 0;
+  color: var(--fg);
+  background: transparent;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.menu__item:hover,
+.menu__item:focus-visible {
+  background: var(--ctp-surface1);
+}
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  z-index: 30;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  transform: translateX(-50%);
+  color: var(--ctp-crust);
+  background: var(--ctp-peach);
+  font-size: 0.85rem;
+}

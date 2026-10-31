@@ -21,7 +21,9 @@ use whatsapp_rust::wacore::types::presence::ReceiptType;
 use whatsapp_rust::wacore_binary::jid::JidExt;
 
 use super::{qr, Sent, UnreadRef, WaEvent, WhatsApp};
-use crate::model::{ChatMeta, ConnState, Contact, MediaRef, Message, MessageKind, MsgStatus};
+use crate::model::{
+  ChatAction, ChatMeta, ConnState, Contact, MediaRef, Message, MessageKind, MsgStatus,
+};
 
 pub struct WaOptions {
   pub session_db: PathBuf,
@@ -111,6 +113,22 @@ impl WhatsApp for RustWa {
       id: sent.message_id,
       ts: now_secs(),
     })
+  }
+
+  async fn chat_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
+    let jid: Jid = chat_jid.parse().map_err(|e| anyhow!("jid inválido: {e}"))?;
+    let actions = self.client.chat_actions();
+    let res = match action {
+      ChatAction::Archive(true) => actions.archive_chat(&jid, None).await,
+      ChatAction::Archive(false) => actions.unarchive_chat(&jid, None).await,
+      ChatAction::Pin(true) => actions.pin_chat(&jid).await,
+      ChatAction::Pin(false) => actions.unpin_chat(&jid).await,
+      ChatAction::Mute(None) => actions.mute_chat(&jid).await,
+      ChatAction::Mute(Some(until_ms)) => actions.mute_chat_until(&jid, until_ms).await,
+      ChatAction::Unmute => actions.unmute_chat(&jid).await,
+      ChatAction::MarkUnread => actions.mark_chat_as_read(&jid, false, None).await,
+    };
+    res.map_err(|e| anyhow!("{e}"))
   }
 
   async fn mark_read(&self, chat_jid: &str, unread: &[UnreadRef]) -> Result<()> {
@@ -399,6 +417,20 @@ impl Translator {
           }))
           .await
       }
+      Event::MuteUpdate(u) => {
+        let until = if u.action.muted == Some(true) {
+          u.action.mute_end_timestamp.unwrap_or(-1)
+        } else {
+          0
+        };
+        self
+          .send(WaEvent::ChatMeta(ChatMeta {
+            jid: u.jid.to_non_ad_string(),
+            muted_until: Some(until),
+            ..Default::default()
+          }))
+          .await
+      }
       Event::PinUpdate(u) => {
         self
           .send(WaEvent::ChatMeta(ChatMeta {
@@ -678,11 +710,22 @@ fn convert_conversation(conv: &wa::Conversation, limit: usize) -> Option<WaEvent
       }),
       archived: conv.archived,
       pinned: conv.pinned.map(|p| p > 0),
+      muted_until: conv.mute_end_time.map(history_mute_ms),
     },
     last_ts,
     messages,
     media,
   })
+}
+
+/// `muteEndTime` do histórico em ms; aceita segundos (valores pequenos demais para ms).
+fn history_mute_ms(t: u64) -> i64 {
+  let t = i64::try_from(t).unwrap_or(-1);
+  if t > 0 && t < 100_000_000_000 {
+    t * 1000
+  } else {
+    t
+  }
 }
 
 /// Nomes e ligação `@lid` <-> telefone vindos de uma conversa do histórico.

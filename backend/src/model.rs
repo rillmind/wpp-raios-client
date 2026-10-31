@@ -168,4 +168,17 @@ pub struct ChatMeta {
   pub unread_count: Option<u32>,
   pub archived: Option<bool>,
   pub pinned: Option<bool>,
+  /// Silenciada até (ms); `Some(-1)` = para sempre, `Some(0)` = não silenciada.
+  pub muted_until: Option<i64>,
+}
+
+/// Ação na conversa pedida pela interface (sincroniza com o celular).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatAction {
+  Archive(bool),
+  Pin(bool),
+  /// `None` = para sempre; `Some(ms)` = até esse instante.
+  Mute(Option<i64>),
+  Unmute,
+  MarkUnread,
 }

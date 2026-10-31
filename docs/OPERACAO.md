@@ -40,6 +40,7 @@ Tudo em `127.0.0.1`. As rotas exigem `Authorization: Bearer <token>`; só `/api/
 | `GET /api/chats/{jid}/messages/{id}/media` | baixa a imagem, figurinha, vídeo ou áudio do WhatsApp na hora (`Cache-Control: no-store`; até 32 MB, vídeo até 100 MB) |
 | `GET /api/chats/{jid}/avatar` | foto de perfil, buscada na hora; `204` se não houver |
 | `POST /api/chats/{jid}/read` | recibos de leitura + marca lido no celular |
+| `POST /api/chats/{jid}/action` | `{ "action": "archive" \| "unarchive" \| "pin" \| "unpin" \| "mute" \| "unmute" \| "unread", "hours"? }` (`hours` só em `mute`; sem ele, para sempre) |
 | `POST /api/chats/{jid}/send` | `{ "text": "..." }`, uma mensagem por requisição |
 | `GET /api/events` | SSE: `message.new`, `message.status`, `chat.updated`, `connection.state` (e `resync`) |
 

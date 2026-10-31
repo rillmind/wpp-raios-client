@@ -12,7 +12,9 @@ use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use crate::model::{ChatMeta, Contact, MediaInfo, MediaRef, Message, MessageKind, MsgStatus};
+use crate::model::{
+  ChatAction, ChatMeta, Contact, MediaInfo, MediaRef, Message, MessageKind, MsgStatus,
+};
 
 /// Item da lista de chats.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -32,6 +34,8 @@ pub struct ChatSummary {
   pub last_sender: Option<String>,
   pub archived: bool,
   pub pinned: bool,
+  /// Silenciada agora (notificações desligadas no celular).
+  pub muted: bool,
   /// Jid de quem mandou a última mensagem do grupo (`""` = nós); vira `last_sender`.
   #[serde(skip)]
   last_sender_jid: Option<String>,
@@ -129,6 +133,31 @@ impl Db {
     }
     tx.commit()?;
     Ok(())
+  }
+
+  /// Reflete no banco uma ação já feita no WhatsApp.
+  pub fn apply_action(&self, chat_jid: &str, action: ChatAction) -> Result<()> {
+    let mut meta = ChatMeta {
+      jid: chat_jid.to_string(),
+      ..Default::default()
+    };
+    match action {
+      ChatAction::Archive(archived) => {
+        meta.archived = Some(archived);
+        // O WhatsApp não deixa conversa arquivada fixada.
+        if archived {
+          meta.pinned = Some(false);
+        }
+      }
+      ChatAction::Pin(pinned) => meta.pinned = Some(pinned),
+      ChatAction::Mute(until) => meta.muted_until = Some(until.unwrap_or(-1)),
+      ChatAction::Unmute => meta.muted_until = Some(0),
+      ChatAction::MarkUnread => {
+        let current = self.get_chat(chat_jid)?.map_or(0, |c| c.unread_count);
+        return self.set_unread(chat_jid, current.max(1));
+      }
+    }
+    self.upsert_chat(&meta)
   }
 
   pub fn set_unread(&self, chat_jid: &str, count: u32) -> Result<()> {
@@ -481,21 +510,23 @@ impl Db {
 
 fn upsert_chat(conn: &Connection, meta: &ChatMeta) -> Result<()> {
   conn.execute(
-    "INSERT INTO chats (jid, name, is_group, unread_count, archived, pinned)
-     VALUES (?1, ?2, ?3, COALESCE(?4, 0), COALESCE(?5, 0), COALESCE(?6, 0))
+    "INSERT INTO chats (jid, name, is_group, unread_count, archived, pinned, muted_until)
+     VALUES (?1, ?2, ?3, COALESCE(?4, 0), COALESCE(?5, 0), COALESCE(?6, 0), ?7)
      ON CONFLICT(jid) DO UPDATE SET
        name         = COALESCE(excluded.name, chats.name),
        is_group     = MAX(chats.is_group, excluded.is_group),
        unread_count = COALESCE(?4, chats.unread_count),
        archived     = COALESCE(?5, chats.archived),
-       pinned       = COALESCE(?6, chats.pinned)",
+       pinned       = COALESCE(?6, chats.pinned),
+       muted_until  = COALESCE(?7, chats.muted_until)",
     params![
       meta.jid,
       meta.name,
       meta.is_group,
       meta.unread_count,
       meta.archived,
-      meta.pinned
+      meta.pinned,
+      meta.muted_until
     ],
   )?;
   Ok(())
@@ -537,7 +568,8 @@ const CHAT_SELECT: &str = "SELECT c.jid,
      CASE WHEN c.is_group THEN
        (SELECT CASE WHEN lm3.from_me THEN '' ELSE lm3.sender_jid END FROM messages lm3
          WHERE lm3.chat_jid = c.jid ORDER BY lm3.ts DESC, lm3.rowid DESC LIMIT 1)
-     END
+     END,
+     c.muted_until
    FROM chats c
    LEFT JOIN lid_map lm ON lm.lid = c.jid
    LEFT JOIN contacts dc ON dc.jid = c.jid
@@ -595,7 +627,17 @@ fn chat_from_row(r: &Row<'_>) -> rusqlite::Result<ChatSummary> {
       .and_then(MsgStatus::parse),
     last_sender: None,
     last_sender_jid: r.get(10)?,
+    muted: is_muted(r.get(11)?),
   })
+}
+
+/// `muted_until`: -1 = para sempre; no futuro = silenciada.
+fn is_muted(until_ms: Option<i64>) -> bool {
+  let now_ms = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0);
+  matches!(until_ms, Some(u) if u == -1 || u > now_ms)
 }
 
 fn message_from_row(r: &Row<'_>) -> rusqlite::Result<Message> {
