@@ -197,14 +197,16 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     setReplyTo(null)
   }, [])
 
-  // Esc dentro de uma conversa: primeiro desmarca a resposta (o foco fica na caixa);
-  // sem resposta marcada, volta para a tela inicial (inclusive digitando).
+  // Esc dentro de uma conversa, um passo por vez: desmarca a resposta (o foco fica na
+  // caixa); depois sai da caixa de mensagem; depois volta para a tela inicial.
   const replying = replyTo !== null
   useEffect(() => {
     if (!selected) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing) return
+      const typing = document.activeElement?.classList.contains('composer__input') ?? false
       if (replying) setReplyTo(null)
+      else if (typing) (document.activeElement as HTMLElement).blur()
       else closeChat()
     }
     window.addEventListener('keydown', onKey)
