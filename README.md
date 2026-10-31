@@ -99,6 +99,15 @@ servidor; para acessar de outra máquina:
 
 Variáveis do compose: `WPP_TAG` (latest), `WPP_HOST_PORT` (8787), `WPP_UID`/`WPP_GID` (1000), `RUST_LOG` (info).
 
+**Podman rootless:** o UID 1000 do container não é o seu UID no host, e o container falha com
+`Permission denied` em `/data/config.toml`. Rode-o como root do container, que no rootless é o
+seu próprio usuário (sem privilégios extras), e não precisa de `chown`:
+
+```sh
+printf 'WPP_UID=0\nWPP_GID=0\n' > .env   # lido pelo compose; já no .gitignore
+podman compose up -d
+```
+
 **Levar a sessão já pareada para o servidor**, sem parear de novo:
 
 1. Pare o backend local (`Ctrl+C` ou `systemctl --user stop wpp-lite`). **Nunca rode duas
