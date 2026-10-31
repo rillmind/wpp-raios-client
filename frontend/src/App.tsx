@@ -301,10 +301,11 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
     if (autoRead && chat && chat.unread_count > 0 && conn === 'connected') void markRead(jid)
   }
 
-  /** Abre a conversa com uma pessoa (clicada num grupo), mesmo que ainda não exista. */
-  async function openPerson(jid: string) {
+  /** Abre a conversa com uma pessoa (clicada num grupo) ou com um telefone escrito numa
+   *  mensagem, mesmo que ainda não exista. */
+  async function openPerson(who: { jid: string } | { phone: string }) {
     try {
-      const chat = await api.personChat(jid)
+      const chat = await ('jid' in who ? api.personChat(who.jid) : api.phoneChat(who.phone))
       if (!chats.some((c) => c.jid === chat.jid)) setDraftChat(chat)
       select(chat.jid)
     } catch (e) {
@@ -543,7 +544,8 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             replyTo={replyTo?.chat_jid === conv.jid ? replyTo : null}
             onCancelReply={() => setReplyTo(null)}
             onMessagePick={messagePick}
-            onOpenPerson={(jid) => void openPerson(jid)}
+            onOpenPerson={(jid) => void openPerson({ jid })}
+            onOpenPhone={(phone) => void openPerson({ phone })}
           />
         ) : conn === 'waiting_qr' ? (
           <MainPairing />

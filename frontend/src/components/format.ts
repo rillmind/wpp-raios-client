@@ -50,6 +50,39 @@ export function withMentionNames(text: string, mentions: Mention[] | undefined):
     .join('')
 }
 
+/** Uma parte do texto: comum ou um telefone (`phone`: só dígitos, com DDI). */
+export type PhonePart = { text: string; phone?: string }
+
+// Com `+` (qualquer país) ou no formato brasileiro com DDD: (11) 99999-8888, 11 3333-4444,
+// 11999998888. Sem pontos nem barras, para não pegar CPF, valores e datas.
+const PHONE_RE = /(?<![\w+])(?:\+\d[\d ()-]{6,18}\d|\(?\d{2}\)?[ -]?\d{4,5}[ -]?\d{4})(?!\w)/g
+
+/** Só dígitos, com DDI, se o trecho parece um telefone; senão `null`. */
+export function phoneDigits(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '')
+  if (raw.startsWith('+')) return digits.length >= 10 && digits.length <= 15 ? digits : null
+  // Brasil sem DDI: DDD (sem zero) e fixo (8 dígitos) ou celular (9, começando com 9).
+  if (!/^[1-9][1-9]/.test(digits)) return null
+  if (digits.length === 11 && digits[2] === '9') return `55${digits}`
+  if (digits.length === 10 && digits[2] >= '2' && digits[2] <= '8') return `55${digits}`
+  return null
+}
+
+/** Divide o texto nos telefones que dá para abrir no WhatsApp. */
+export function splitPhones(text: string): PhonePart[] {
+  const parts: PhonePart[] = []
+  let last = 0
+  for (const match of text.matchAll(PHONE_RE)) {
+    const phone = phoneDigits(match[0])
+    if (!phone) continue
+    if (match.index > last) parts.push({ text: text.slice(last, match.index) })
+    parts.push({ text: match[0], phone })
+    last = match.index + match[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

@@ -44,6 +44,8 @@ interface Props {
   onMessagePick: (m: Message, pick: MessagePick) => void
   /** Abre a conversa com uma pessoa (remetente ou marcada). */
   onOpenPerson: (jid: string) => void
+  /** Abre a conversa com um telefone escrito na mensagem (só dígitos, com DDI). */
+  onOpenPhone: (digits: string) => void
 }
 
 /** Dentro disso o duplo clique é do próprio controle (mídia, citação, links). */
@@ -73,6 +75,7 @@ export function Conversation({
   onCancelReply,
   onMessagePick,
   onOpenPerson,
+  onOpenPhone,
 }: Props) {
   const [menu, setMenu] = useState<{ m: Message; x: number; y: number } | null>(null)
 
@@ -261,13 +264,13 @@ export function Conversation({
                     {/* Documento já mostra o nome no botão; o corpo só se for legenda. */}
                     {m.body && m.body !== m.media.file_name && (
                       <span className="bubble__text">
-                        <RichText text={m.body} mentions={m.mentions} onMention={onOpenPerson} />
+                        <RichText text={m.body} mentions={m.mentions} onMention={onOpenPerson} onPhone={onOpenPhone} />
                       </span>
                     )}
                   </>
                 ) : (
                   <span className={m.kind === 'text' ? 'bubble__text' : 'bubble__text bubble__text--media'}>
-                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} onMention={onOpenPerson} /> : messageText(m)}
+                    {m.kind === 'text' ? <RichText text={m.body ?? ''} mentions={m.mentions} onMention={onOpenPerson} onPhone={onOpenPhone} /> : messageText(m)}
                   </span>
                 )}
                 <span className="bubble__meta">

@@ -168,6 +168,11 @@ pub trait WhatsApp: Send + Sync {
   /// Jid de telefone de um `@lid`, pelo que a sessão já aprendeu (sem rede).
   async fn phone_for_lid(&self, lid_jid: &str) -> Result<Option<String>>;
 
+  /// Procura um telefone (só dígitos, com DDI) no WhatsApp. `None`: não tem conta. Senão,
+  /// o jid de telefone que o WhatsApp usa (pode diferir do digitado, como o 9 a mais) e o
+  /// `@lid`, quando o servidor informa.
+  async fn lookup_phone(&self, digits: &str) -> Result<Option<(String, Option<String>)>>;
+
   /// Fecha a conexão e grava o estado pendente da sessão.
   async fn shutdown(&self);
 }

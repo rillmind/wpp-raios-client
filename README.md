@@ -20,7 +20,9 @@ Cliente de WhatsApp pessoal que roda na sua máquina ou no seu servidor e abre n
   conversa; uma cor só se repete com mais de 14 pessoas). As marcações (`@`) aparecem com o nome
   da pessoa, destacadas, e com fundo quando quem foi marcado é você. Clicar no nome de quem
   mandou ou numa marcação abre a conversa com a pessoa; se ainda não houver, abre uma vazia, que
-  entra na lista na primeira mensagem.
+  entra na lista na primeira mensagem. Telefones escritos nas mensagens (com `+DDI`, ou brasileiros
+  com DDD, como `(11) 99999-8888`) também são clicáveis: o app confere no WhatsApp se o número
+  tem conta e abre a conversa com ele.
 - Mostra as fotos de perfil, que carregam sozinhas.
 - Imagens, figurinhas, vídeos, áudios e documentos aparecem como um botão com o tamanho do
   arquivo (e a duração, em vídeo e áudio); só são baixados do WhatsApp quando você clica. Imagem

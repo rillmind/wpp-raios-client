@@ -254,6 +254,34 @@ pub async fn person_chat(
   ))
 }
 
+/// Conversa com um número de telefone escrito numa mensagem (só dígitos, com DDI): confere
+/// no WhatsApp se ele tem conta e devolve a conversa como em [`person_chat`].
+pub async fn phone_chat(
+  State(st): State<AppState>,
+  Path(digits): Path<String>,
+) -> ApiResult<Json<ChatSummary>> {
+  if !(8..=15).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    return Err(ApiError::BadRequest("número inválido".into()));
+  }
+  ensure_connected(&st)?;
+  let (pn, lid) = st
+    .wa
+    .lookup_phone(&digits)
+    .await
+    .map_err(ApiError::Upstream)?
+    .ok_or_else(|| ApiError::BadRequest("esse número não tem WhatsApp".into()))?;
+  let chat = st
+    .store
+    .run(move |db| {
+      if let Some(lid) = &lid {
+        db.set_lid_map(lid, &pn)?;
+      }
+      db.chat_for_person(&pn)
+    })
+    .await?;
+  Ok(Json(chat))
+}
+
 #[derive(Deserialize)]
 pub struct ActionBody {
   /// `archive`, `unarchive`, `pin`, `unpin`, `mute`, `unmute` ou `unread`.

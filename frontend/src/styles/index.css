@@ -395,7 +395,16 @@ code {
 .bubble--out .mention {
   color: var(--tick-read-out);
 }
+.phone-link {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bubble--out .phone-link {
+  color: var(--tick-read-out);
+}
 .mention--link,
+.phone-link,
 .bubble__sender--link {
   padding: 0;
   border: 0;

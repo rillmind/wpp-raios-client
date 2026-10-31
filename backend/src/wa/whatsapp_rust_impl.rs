@@ -669,6 +669,31 @@ impl WhatsApp for RustWa {
     )
   }
 
+  async fn lookup_phone(&self, digits: &str) -> Result<Option<(String, Option<String>)>> {
+    let found = self
+      .client
+      .contacts()
+      .is_on_whatsapp(&[Jid::pn(digits)])
+      .await
+      .map_err(|e| anyhow!("consultando o número: {e}"))?;
+    let Some(r) = found.into_iter().find(|r| r.is_registered) else {
+      return Ok(None);
+    };
+    // Às vezes o servidor responde pelo `@lid`, com o telefone em `pn_jid`.
+    let (pn, lid) = if r.jid.is_lid() {
+      let pn = r
+        .pn_jid
+        .map_or_else(|| pn_jid(digits), |j| j.to_non_ad_string());
+      (pn, Some(r.jid.to_non_ad_string()))
+    } else {
+      (
+        r.jid.to_non_ad_string(),
+        r.lid.map(|j| j.to_non_ad_string()),
+      )
+    };
+    Ok(Some((pn, lid)))
+  }
+
   async fn shutdown(&self) {
     if let Some(handle) = self.handle.lock().await.take() {
       handle.shutdown().await;
