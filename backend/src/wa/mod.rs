@@ -11,6 +11,7 @@ use async_trait::async_trait;
 
 use crate::model::{ChatMeta, ConnState, Contact, MediaRef, Message, MsgStatus};
 
+pub use qr::svg as qr_svg;
 pub use whatsapp_rust_impl::{start, WaOptions};
 
 /// Eventos já normalizados que o backend grava no banco e repassa ao front.
@@ -74,6 +75,9 @@ pub struct Sent {
 #[async_trait]
 pub trait WhatsApp: Send + Sync {
   fn state(&self) -> ConnState;
+
+  /// Conteúdo do QR de pareamento atual, enquanto não há celular pareado.
+  fn pairing_qr(&self) -> Option<String>;
 
   /// Envia uma mensagem de texto.
   async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent>;

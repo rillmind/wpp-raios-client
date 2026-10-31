@@ -50,9 +50,10 @@ respondendo: sem bot, sem automação, sem envio em massa (há limite de envios 
 
 ## Como rodar
 
-Em todos os jeitos abaixo, no primeiro início o QR aparece no terminal (ou nos logs). No
-celular: **WhatsApp → Aparelhos conectados → Conectar aparelho**. Depois disso ele reconecta
-sozinho. A interface pede um token uma vez: é o campo `token` de `data/config.toml`.
+Em todos os jeitos abaixo, no primeiro início o QR de pareamento aparece na primeira tela da
+interface (e também no terminal ou nos logs). No celular: **WhatsApp → Aparelhos conectados →
+Conectar aparelho**. Depois disso ele reconecta sozinho e o QR não aparece mais. A interface pede
+um token uma vez: é o campo `token` de `data/config.toml`.
 
 ### Docker (servidor)
 

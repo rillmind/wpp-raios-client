@@ -24,16 +24,24 @@ struct FakeWa {
   sent: Mutex<Vec<(String, String)>>,
   read: Mutex<Vec<(String, Vec<String>)>>,
   offline: bool,
+  /// Com QR: o "WhatsApp" está esperando o pareamento.
+  qr: Option<String>,
 }
 
 #[async_trait]
 impl WhatsApp for FakeWa {
   fn state(&self) -> ConnState {
-    if self.offline {
+    if self.qr.is_some() {
+      ConnState::WaitingQr
+    } else if self.offline {
       ConnState::Disconnected
     } else {
       ConnState::Connected
     }
+  }
+
+  fn pairing_qr(&self) -> Option<String> {
+    self.qr.clone()
   }
 
   async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
@@ -579,4 +587,28 @@ async fn send_refuses_status_and_channels() {
     h.wa.sent.lock().unwrap().is_empty(),
     "nada pode ser enviado"
   );
+}
+
+#[tokio::test]
+async fn pairing_shows_qr_without_token_only_while_waiting() {
+  let req = || Request::get("/api/pairing").body(Body::empty()).unwrap();
+
+  let waiting = harness_with(FakeWa {
+    qr: Some("2@abc,def,ghi".into()),
+    ..Default::default()
+  });
+  let resp = waiting.app.clone().oneshot(req()).await.unwrap();
+  assert_eq!(resp.status(), StatusCode::OK, "sem token");
+  let body: Value =
+    serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+  assert_eq!(body["state"], "waiting_qr");
+  assert!(body["qr_svg"].as_str().unwrap().starts_with("<?xml"));
+
+  // Pareado: nada de QR.
+  let paired = harness();
+  let resp = paired.app.clone().oneshot(req()).await.unwrap();
+  let body: Value =
+    serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+  assert_eq!(body["state"], "connected");
+  assert!(body["qr_svg"].is_null());
 }

@@ -41,6 +41,8 @@ pub struct RustWa {
   avatar_slots: Semaphore,
   /// Mesma sessão que a lib usa (o `SqliteStore` é um handle clonável).
   session: SqliteStore,
+  /// QR atual, compartilhado com o [`Translator`].
+  qr: Arc<Mutex<Option<String>>>,
 }
 
 /// Conecta (ou pareia, mostrando o QR no terminal) e passa a emitir eventos em `tx`.
@@ -52,7 +54,9 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
 
   let (state_tx, state_rx) = watch::channel(ConnState::Connecting);
   let state_tx = Arc::new(state_tx);
+  let qr = Arc::new(Mutex::new(None));
   let ctx = Arc::new(Translator {
+    qr: Arc::clone(&qr),
     tx,
     state: state_tx,
     history_limit: opts.history_msgs_per_chat,
@@ -79,6 +83,7 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
     state: state_rx,
     avatar_slots: Semaphore::new(AVATAR_CONCURRENCY),
     session,
+    qr,
   }))
 }
 
@@ -86,6 +91,13 @@ pub async fn start(opts: WaOptions, tx: mpsc::Sender<WaEvent>) -> Result<Arc<dyn
 impl WhatsApp for RustWa {
   fn state(&self) -> ConnState {
     *self.state.borrow()
+  }
+
+  fn pairing_qr(&self) -> Option<String> {
+    if self.state() != ConnState::WaitingQr {
+      return None;
+    }
+    self.qr.lock().ok().and_then(|q| q.clone())
   }
 
   async fn send_text(&self, chat_jid: &str, text: &str) -> Result<Sent> {
@@ -233,6 +245,8 @@ impl WhatsApp for RustWa {
 
 /// Converte eventos da biblioteca em [`WaEvent`].
 struct Translator {
+  /// Último QR de pareamento (para a interface); some ao parear.
+  qr: Arc<Mutex<Option<String>>>,
   tx: mpsc::Sender<WaEvent>,
   state: Arc<watch::Sender<ConnState>>,
   history_limit: usize,
@@ -248,7 +262,10 @@ impl Translator {
     tracing::debug!(event = ?event, "evento do WhatsApp");
 
     match event {
-      Event::Connected(_) => self.set_state(ConnState::Connected).await,
+      Event::Connected(_) => {
+        self.set_qr(None);
+        self.set_state(ConnState::Connected).await
+      }
       Event::Disconnected(_) | Event::StreamError(_) | Event::ConnectFailure(_) => {
         self.set_state(ConnState::Disconnected).await
       }
@@ -257,6 +274,7 @@ impl Translator {
         self.set_state(ConnState::LoggedOut).await
       }
       Event::PairingQrCode(qr) => {
+        self.set_qr(Some(qr.code.to_string()));
         self.set_state(ConnState::WaitingQr).await;
         match qr::render(&qr.code) {
           Some(art) => {
@@ -272,7 +290,10 @@ impl Translator {
           None => tracing::error!("não foi possível gerar o QR code"),
         }
       }
-      Event::PairSuccess(_) => tracing::info!("pareamento concluído"),
+      Event::PairSuccess(_) => {
+        self.set_qr(None);
+        tracing::info!("pareamento concluído")
+      }
       Event::Messages(batch) => {
         for inbound in batch.iter() {
           if let Some((msg, media)) = convert_live(&inbound.message, &inbound.info) {
@@ -508,6 +529,12 @@ impl Translator {
         Err(e) => tracing::debug!(error = %e, "falha ao buscar nome do grupo"),
       }
     });
+  }
+
+  fn set_qr(&self, code: Option<String>) {
+    if let Ok(mut q) = self.qr.lock() {
+      *q = code;
+    }
   }
 
   async fn set_state(&self, state: ConnState) {

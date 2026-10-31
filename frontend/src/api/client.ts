@@ -1,4 +1,4 @@
-import type { Chat, Message, MessagesPage } from './types'
+import type { Chat, ConnState, Message, MessagesPage } from './types'
 
 // Em dev o Vite (5173) fala com o backend (8787); no build servido pelo
 // próprio backend, a API está na mesma origem.
@@ -56,6 +56,19 @@ export async function fetchImage(path: string): Promise<Blob | null> {
   if (res.status === 204 || res.status === 404) return null
   if (!res.ok) throw new ApiError(res.status, res.statusText)
   return res.blob()
+}
+
+export interface Pairing {
+  state: ConnState
+  /** SVG do QR, só enquanto não há celular pareado. */
+  qr_svg: string | null
+}
+
+/** Estado do pareamento; não precisa de token (é a primeira tela do primeiro uso). */
+export async function fetchPairing(): Promise<Pairing> {
+  const res = await fetch(`${API_URL}/api/pairing`, { cache: 'no-store' })
+  if (!res.ok) throw new ApiError(res.status, res.statusText)
+  return res.json() as Promise<Pairing>
 }
 
 const enc = encodeURIComponent

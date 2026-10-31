@@ -5,6 +5,8 @@ import { useEvents } from './api/useEvents'
 import { ChatList } from './components/ChatList'
 import { Conversation, type ConvState } from './components/Conversation'
 import { Login } from './components/Login'
+import { usePairing } from './api/usePairing'
+import { PairingQr } from './components/PairingQr'
 import { chatSection, SECTION_TITLE, type Section } from './components/format'
 import { Rail } from './components/Rail'
 
@@ -267,10 +269,21 @@ function Client({ onUnauthorized }: { onUnauthorized: () => void }) {
             onMarkRead={() => markRead(conv.jid)}
             onSend={send}
           />
+        ) : conn === 'waiting_qr' ? (
+          <MainPairing />
         ) : (
           <p className="empty empty--center">Selecione uma conversa.</p>
         )}
       </main>
+    </div>
+  )
+}
+
+function MainPairing() {
+  const pairing = usePairing()
+  return (
+    <div className="main__center">
+      <PairingQr svg={pairing?.qr_svg ?? null} />
     </div>
   )
 }
